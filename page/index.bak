@@ -1,0 +1,247 @@
+import { getText } from "@zos/i18n";
+import * as Styles from "zosLoader:./index.[pf].layout.js";
+import AutoGUI from "@silver-zepp/autogui";
+import BLEMaster, {
+  PERMISSIONS,
+  ab2hex,
+  ab2num,
+  ab2str,
+} from "@silver-zepp/easy-ble";
+import LKDecoder from "../utils/LKDecoder";
+const ble = new BLEMaster();
+const AppContext = {
+  MainUI: null,
+  LKDecoder: null,
+  BLE: null,
+};
+
+const MAC_EUC = "88:25:83:F3:5E:E2";
+//const MAC_EUC = "D8:BC:38:E5:8C:F2";
+//const MAC_VARIA = "CA:D1:66:93:69:67";
+const MAC_VARIA = "CB:08:79:B6:C9:34";
+
+const LK_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
+const LK_UUID_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb";
+const VARIA_SERVICE_UUID = "6a4e3200-667b-11e3-949a-0800200c9a66";
+const VARIA_UUID_NOTIFY_CHAR = "6a4e3203-667b-11e3-949a-0800200c9a66";
+const VARIA_BAT_SERVICE_UUID = "180F";
+const VARIA_BAT_UUID_CHAR = "2A19";
+const lk_services = {
+  [LK_SERVICE_UUID]: {
+    [LK_UUID_NOTIFY_CHAR]: ["2902"],
+  },
+};
+
+Page({
+  onInit() {
+    AutoGUI.SetTextSize(20);
+    //AutoGUI.SetPadding(0);
+    //AutoGUI.SetBtnRadius(180);
+    //AutoGUI.SetColor(COLOR_BLUE);
+    //AutoGUI.SetColor(multiplyHexColor(COLOR_WHITE, 0.2));
+    //AutoGUI.SetTextColor(COLOR_GREEN);
+    this.indexPage = new UI();
+    this.indexPage.init();
+
+    this.BLE = new BLE();
+    this.BLE.init();
+    BLEMaster.SetDebugLevel(3);
+
+    AppContext.MainUI = this.indexPage;
+  },
+  destroy() {
+    ble.quit();
+    this.indexPage.quit();
+  },
+});
+
+class UI {
+  init() {
+    const gui = new AutoGUI();
+    // add a text widget
+    this.spd_txt = gui.text("Spd:");
+    gui.newRow();
+    this.vlt_txt = gui.text("Vlt:");
+    gui.newRow();
+    this.pwm_txt = gui.text("PWM:");
+    gui.newRow();
+    this.vehspd_txt = gui.text("VehSpd:");
+    gui.newRow();
+    this.vehdst_txt = gui.text("VehDst:");
+    // split the row
+
+    // finally render the GUI
+    gui.render();
+  }
+  drawGUI() {
+    this.mainView();
+  }
+
+  mainView() {}
+}
+
+class BLE {
+  // initial setup
+  init() {
+    console.log("=========================================");
+    console.log("Initializing BLE operations", Date.now());
+
+    this.LKDecoder = new LKDecoder();
+    this.LKDecoder.init();
+    //  ble.quit(); //clean up everything before starting
+
+    this.scan();
+  }
+  // the mac of a device you are connecting to
+  scan() {
+    // scan for all the devices (this step is optional)
+    const scan_success = ble.startScan((scan_result) => {
+      // print object with all found devices (note the return)
+      console.log(JSON.stringify(ble.get.devices()));
+
+      // const device = ble.get.devices();
+      /*
+      const keys = Object.keys(device); // ["c8:a6:ef:e3:af:42"]
+      const device_mac = keys[0];
+      const device_name = device[device_mac].dev_name;
+      console.log("Device MAC:", device_mac);
+      console.log("Device Name:", device_name);
+*/
+      // did we find the device we were looking for?
+      //  if (device_name && device_name.startsWith("Bl")) {
+      //   console.log("LK EUC found, connecting to it");
+      if (ble.get.hasMAC(MAC_EUC)) {
+        ble.stopScan();
+        this.connect(MAC_EUC);
+      }
+    }); // }, { allow_duplicates: true });
+  }
+
+  connect(mac, attempt = 1, max_attempts = 30, delay = 1000) {
+    ble.connect(mac, (connect_result) => {
+      console.log("Connect result:", JSON.stringify(connect_result));
+
+      // try to reconnect until we get a successful connection
+      if (!connect_result.connected) {
+        if (attempt < max_attempts) {
+          // first kill the connection
+          ble.quit(); // ble.disconnect(ble.get.connectionID());
+          // retry
+          console.log(
+            `Attempt ${attempt} failed. Retrying in ${delay / 1000} seconds...`
+          );
+          setTimeout(
+            () => this.connect(mac, attempt + 1, max_attempts, delay),
+            delay
+          );
+        } else {
+          console.log("Connection failed. Max attempts reached.");
+          // handle max retry attempts reached
+        }
+      } else {
+        // successful connection - build profile and start listener
+        this.listenEUC();
+      }
+    });
+  }
+
+  // 3. build profile and start the listener
+  listenEUC() {
+    // generate a profile
+    console.log("Generating a profile");
+    const profile_object = ble.generateProfileObject(lk_services);
+
+    // start the listener and use full profile
+    console.log("Starting the listener");
+    ble.startListener(profile_object, (response) => {
+      // check if the profile was built OK and the device is ready for comms
+      console.log("Backend response:", response.message);
+      if (response.success) {
+        //  is_ble_ready = true; // gui buttons flag - allow clicking on them
+
+        // finally manipulate - read, write, subscribe to notifications
+        this.communicateEUC();
+      } else {
+        console.log(
+          `Error starting listener: ${response.message} (Code: ${response.code})`
+        );
+      }
+    });
+  }
+
+  communicateEUC() {
+    ble.write.enableCharaNotifications(LK_UUID_NOTIFY_CHAR, true);
+    // let n = 0;
+    ble.on.descWriteComplete((chara, desc, status) => {
+      console.log(`Descriptor write complete for Characteristic UUID: ${chara}, 
+                   Descriptor UUID: ${desc}, Status: ${status}`);
+    });
+    ble.on.charaNotification((uuid, data, length) => {
+      if (uuid !== LK_UUID_NOTIFY_CHAR) {
+        console.log(
+          "Received notification from an unexpected characteristic:",
+          uuid
+        );
+        return;
+      }
+
+      if (!this.LKDecoder) {
+        console.log("LKDecoder is not initialized.");
+        return;
+      }
+
+      //      n = n + 1;
+      //console.log(ab2hex(data));
+      const result = this.LKDecoder.frameBuffer(data);
+      if (!result) {
+        //   console.log("No valid frame received yet.");
+        return;
+      }
+
+      const { speed, hPWM, voltage } = result;
+      //("Speed:", speed);
+      //("hPWM:", hPWM);
+      //("Voltage:", voltage);
+
+      if (
+        AppContext.MainUI &&
+        AppContext.MainUI.spd_txt &&
+        AppContext.MainUI.pwm_txt &&
+        AppContext.MainUI.vlt_txt
+      ) {
+        this.updateUI({ speed, hPWM, voltage });
+      }
+    });
+  }
+
+  // Method to update the UI
+  updateUI({ speed, hPWM, voltage }) {
+    try {
+      if (AppContext.MainUI?.spd_txt?.update) {
+        AppContext.MainUI.spd_txt.update({ text: "Spd: " + speed });
+      } else {
+        console.log(
+          "spd_txt is not properly initialized or missing an update method."
+        );
+      }
+
+      if (AppContext.MainUI?.pwm_txt?.update) {
+        AppContext.MainUI.pwm_txt.update({ text: "PWM: " + hPWM });
+      } else {
+        console.log(
+          "pwm_txt is not properly initialized or missing an update method."
+        );
+      }
+
+      if (AppContext.MainUI?.vlt_txt?.update) {
+        AppContext.MainUI.vlt_txt.update({ text: "Vlt: " + voltage });
+      } else {
+        console.log(
+          "vlt_txt is not properly initialized or missing an update method."
+        );
+      }
+    } catch (error) {
+      console.log("Error updating UI:", error);
+    }
+  }
+}
