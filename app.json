@@ -27,7 +27,8 @@
           "pages": [
             "page/index"
           ]
-        }
+        },"app-service": {
+      "services": ["app-service/wd_ble"]}
       },
       "platforms": [
         {

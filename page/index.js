@@ -7,51 +7,65 @@ import BLEMaster, {
   ab2num,
   ab2str,
 } from "@silver-zepp/easy-ble";
-import LKDecoder from "../utils/LKDecoder";
+import * as appService from "@zos/app-service";
+import { queryPermission, requestPermission } from "@zos/app";
+const { wdEvent } = getApp()._options.globalData;
 const ble = new BLEMaster();
 const AppContext = {
   MainUI: null,
   //LKDecoder: null,
-  BLE: null,
 };
+import { setWakeUpRelaunch } from "@zos/display";
+setWakeUpRelaunch({ relaunch: true });
+let thisFile = "pages/index";
+const serviceFile = "app-service/wd_ble";
+const permissions = ["device:os.bg_service"];
+const BLEDevicesNb = 3;
+function permissionRequest(vm) {
+  const [result2] = queryPermission({
+    permissions,
+  });
 
-//const MAC_EUC = "88:25:83:F3:5E:E2";
-const MAC_EUC = "D8:BC:38:E5:8C:F2";
-//const MAC_VARIA = "CA:D1:66:93:69:67";
-const MAC_VARIA = "CB:08:79:B6:C9:34";
-const LK_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-const LK_UUID_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb";
-const VARIA_UUID_NOTIFY_CHAR = "6a4e3203-667b-11e3-949a-0800200c9a66";
+  if (result2 === 0) {
+    requestPermission({
+      permissions,
+      callback([result2]) {
+        if (result2 === 2) {
+          startTimeService(vm);
+        }
+      },
+    });
+  } else if (result2 === 2) {
+    startTimeService(vm);
+  }
+}
+function startTimeService(vm) {
+  console.log(`=== start service: ${serviceFile} ===`);
+  const result = appService.start({
+    url: serviceFile,
+    param: `service=${serviceFile}&action=start`,
+    complete_func: (info) => {
+      console.log(`startService result: ` + JSON.stringify(info));
+    },
+  });
 
-const lk_services = {
-  // service #1
-  "0000ffe0-0000-1000-8000-00805f9b34fb": {
-    // service UUID
-    "0000ffe1-0000-1000-8000-00805f9b34fb": ["2902"], // NOTIFY chara UUID
-    //  ^--- descriptor UUID
-  },
-  // ... add other services here if needed
-};
+  if (result) {
+    console.log("startService result: ", result);
+  }
+}
 
-const varia_services = {
-  // service #1
-  "6a4e3200-667b-11e3-949a-0800200c9a66": {
-    // service UUID
-    "6a4e3203-667b-11e3-949a-0800200c9a66": ["2902"], // NOTIFY chara UUID
-    //  ^--- descriptor UUID
-  },
-  // ... add other services here if needed
-};
-const engo_services = {
-  // service #1
+function stopTimeService(vm) {
+  console.log(`=== stop service: ${serviceFile} ===`);
+  appService.stop({
+    url: serviceFile,
+    param: `service=${serviceFile}&action=stop`,
+    complete_func: (info) => {
+      console.log(`stopService result: ` + JSON.stringify(info));
 
-  "0783b03e-8535-b5a0-7140-a304d2495cb7": {
-    // service UUID
-    "0783b03e-8535-b5a0-7140-a304d2495cbb": ["2902"], // NOTIFY chara UUID
-    //  ^--- descriptor UUID
-  },
-  // ... add other services here if needed
-};
+      // refresh for button status
+    },
+  });
+}
 
 Page({
   onInit() {
@@ -65,62 +79,39 @@ Page({
     this.indexPage.init();
 
     this.BLE = new BLE();
-    this.BLE.init(2);
+    this.BLE.init(BLEDevicesNb);
     BLEMaster.SetDebugLevel(3);
 
     AppContext.MainUI = this.indexPage;
   },
+  build() {
+    const vm = this;
+    let services = appService.getAllAppServices();
+    vm.state.running = services.includes(serviceFile);
+
+    console.log("service status %s", vm.state.running);
+    permissionRequest(vm);
+  },
   destroy() {
+    stopTimeService(vm);
+    /*
     Object.keys(this.BLE.connections).forEach((mac) => {
       if (!ble.quit(mac)) {
         console.log(`Failed to quit BLE connection for ${mac}`);
       }
     });
     this.indexPage.quit();
+    */
   },
 });
-
-class UI {
-  init() {
-    const gui = new AutoGUI();
-    // add a text widget
-    this.spd_txt = gui.text("Spd:");
-    gui.newRow();
-    this.vlt_txt = gui.text("Vlt:");
-    gui.newRow();
-    this.pwm_txt = gui.text("PWM:");
-    gui.newRow();
-    this.vehspd_txt = gui.text("VehSpd:");
-    gui.newRow();
-    this.vehdst_txt = gui.text("VehDst:");
-    // split the row
-
-    // finally render the GUI
-    gui.render();
-  }
-  drawGUI() {
-    this.mainView();
-  }
-
-  mainView() {}
-}
-
 class BLE {
-  // initial setup
   init(expectedDeviceCount) {
-    console.log("=========================================");
-    console.log("Initializing BLE operations", Date.now());
+    // this.connections = {};
+    this.deviceQueue = [];
+    this.expectedDeviceCount = expectedDeviceCount; // Set the expected number of devices
 
-    this.expectedDeviceCount = expectedDeviceCount;
-    this.decoder = null; // Initialize decoder to null
-    this.devices = {}; // mac (uppercased) → device_name
-    this.connections = {}; // mac → { name, connected, decoder, notifChar}
-    this.deviceQueue = []; // Queue of devices to connect to
-    this.isConnecting = false; // Flag to track ongoing connections
     this.scan();
   }
-
-  // the mac of a device you are connecting to
   scan() {
     console.log("Starting BLE scan...");
     const scan_success = ble.startScan(
@@ -131,14 +122,14 @@ class BLE {
         for (let i = 0; i < keys.length; i++) {
           const device_mac = keys[i];
           const device_name = device[keys[i]].dev_name;
-
+          /*
           if (this.connections[device_mac]?.connected) {
             console.log(
               `Already connected to ${device_name} (${device_mac}). Skipping.`
             );
             continue;
           }
-
+*/
           // Check if the device is already in the queue
           const isAlreadyInQueue = this.deviceQueue.some(
             (queuedDevice) => queuedDevice.mac === device_mac
@@ -166,7 +157,8 @@ class BLE {
               if (this.deviceQueue.length >= this.expectedDeviceCount) {
                 console.log("Expected devices found. Stopping scan.");
                 ble.stopScan();
-                this.processQueue(); // Start processing the connection queue
+                wdEvent.emit("deviceQueue", this.deviceQueue);
+                //   this.processQueue(); // Start processing the connection queue
                 return;
               }
               break;
@@ -181,193 +173,42 @@ class BLE {
       console.log("Failed to start BLE scan.");
     }
   }
-  enableCharNotif() {
-    console.log("All listeners started. Executing enableCharNotif...");
-    for (const mac in this.connections) {
-      const notifChar = this.connections[mac].notifChar;
-      if (notifChar) {
-        ble.write[mac].enableCharaNotifications(notifChar, true);
+}
+class UI {
+  init() {
+    const gui = new AutoGUI();
+    // add a text widget
+    this.spd_txt = gui.text("Spd:");
+    gui.newRow();
+    this.vlt_txt = gui.text("Vlt:");
+    gui.newRow();
+    this.pwm_txt = gui.text("PWM:");
+    gui.newRow();
+    this.vehspd_txt = gui.text("VehSpd:");
+    gui.newRow();
+    this.vehdst_txt = gui.text("VehDst:");
+    // split the row
 
-        ble.on[mac].descWriteComplete((chara, desc, status) => {
-          console.log(`Returned status: ${status} for uuid: ${chara}`);
-          if (status === 0) {
-            console.log(`Notifications enabled for ${mac} (${chara})`);
-
-            // Register notification handler after successful enable
-            // I don't get this part. My understanding is hmble.mstOnCharaNotification is global (ie not returning notification per device but is rather a global notification handler).
-            // I tried moving the charaNotification outside of the on class so it would be global but it doesn't work.
-            // The following call will return notifications for all devices, regardless of specified mac adress (I removed the profile_pid filtering).
-            // It's an ugly implementation but I can't make it work otherwise.
-            ble.on[mac].charaNotification((uuid, data, length) => {
-              /*
-              console.log(
-                `Notification received from ${mac}:`,
-                uuid,
-                ab2hex(data)
-              );
-             */
-              // Handle notification data here
-              if (uuid == LK_UUID_NOTIFY_CHAR) {
-                if (!this.decoder) {
-                  console.log("EUC decoder is not initialized.");
-                  return;
-                }
-
-                //      n = n + 1;
-                //console.log(ab2hex(data));
-                const result = this.decoder.frameBuffer(data);
-                if (!result) {
-                  //  console.log("No valid frame received yet.");
-                  return;
-                }
-
-                const { speed, hPWM, voltage } = result;
-                this.updateUI(speed, hPWM, voltage);
-              }
-              if (uuid == VARIA_UUID_NOTIFY_CHAR) {
-                let vehspd;
-                let vehdst;
-                const variaData = new Uint8Array(data);
-                if (variaData.byteLength >= 4) {
-                  vehspd = variaData[3];
-                  vehdst = variaData[2];
-                } else {
-                  vehspd = "--";
-                  vehdst = "--";
-                }
-                this.updateVariaUI(vehspd, vehdst);
-              }
-            });
-          }
-        });
-      } else {
-        console.log(`No notification char_uuid found for ${mac}`);
-      }
-    }
+    // finally render the GUI
+    gui.render();
+    this.checkForUpdate();
+  }
+  drawGUI() {
+    this.mainView();
   }
 
-  processQueue() {
-    if (this.isConnecting || this.deviceQueue.length === 0) {
-      // If no more devices in the queue and all listeners are active, call enableCharNotif
-      if (
-        this.deviceQueue.length === 0 &&
-        Object.keys(this.connections).length >= this.expectedDeviceCount
-      ) {
-        console.log("All devices processed. Calling enableCharNotif...");
-        this.enableCharNotif();
-      }
-      return;
-    }
+  mainView() {}
+  checkForUpdate() {
+    wdEvent.on("EUCData", (result) => {
+      const { speed, hPWM, voltage } = result;
+      this.updateUI(speed, hPWM, voltage);
+    });
 
-    const { mac, name } = this.deviceQueue.shift();
-    this.isConnecting = true;
-
-    console.log(`Connecting to device: ${name} (${mac})`);
-    this.connect(mac, name);
-  }
-
-  connect(mac, name, attempt = 1, max_attempts = 30, delay = 1000) {
-    if (this.connections[mac]?.connected) {
-      console.log(`Already connected to ${name} (${mac}). Skipping.`);
-      this.isConnecting = false;
-      this.processQueue(); // Proceed to the next device in the queue
-      return;
-    }
-
-    console.log("Connecting to:", name, mac);
-    ble.connect(mac, (connect_result) => {
-      console.log("Connect result:", JSON.stringify(connect_result));
-
-      if (!connect_result.connected) {
-        if (attempt < max_attempts) {
-          console.log(
-            `Attempt ${attempt} failed for ${name} (${mac}). Retrying in ${
-              delay / 1000
-            } seconds...`
-          );
-          setTimeout(
-            () => this.connect(mac, name, attempt + 1, max_attempts, delay),
-            delay
-          );
-        } else {
-          console.log(
-            `Connection failed for ${name} (${mac}). Max attempts reached.`
-          );
-          this.isConnecting = false;
-          this.processQueue(); // Proceed to the next device in the queue
-        }
-      } else {
-        console.log(`Connected to ${name} (${mac}).`);
-        this.connections[mac] = {
-          name,
-          connected: true,
-        };
-
-        // Start listening for notifications
-        if (name.startsWith("RVR")) {
-          this.listen(mac, varia_services);
-        } else if (name.startsWith("ENG")) {
-          this.listen(mac, engo_services);
-        } else if (name.startsWith("LK")) {
-          //initialize the EUC decoder
-          this.decoder = new LKDecoder();
-          this.listen(mac, lk_services);
-        }
-      }
+    wdEvent.on("variaData", (result) => {
+      const { vehdst, vehspd } = result;
+      this.updateVariaUI(vehspd, vehdst);
     });
   }
-
-  listen(mac, services) {
-    const profile_object = ble.generateProfileObject(services, mac);
-    const service_uuid = Object.keys(services)[0];
-    const notifChar = Object.keys(services[service_uuid])[0]; // note notifChar is the 1st char uuid!!
-    console.log("setting up listener for ", mac, notifChar);
-    this.connections[mac].notifChar = notifChar;
-    ble.startListener(profile_object, mac, (response) => {
-      if (response.success) {
-        console.log(`Listener started for ${mac}`);
-        //  const service_uuid = Object.keys(services)[0];
-        // const char_uuid = Object.keys(services[service_uuid])[0];
-        this.isConnecting = false;
-        this.processQueue();
-        /*
-        console.log(`Enabling notifications for ${mac} (${char_uuid})`);
-
-        ble.write[mac].enableCharaNotifications(char_uuid, true);
-
-        ble.on[mac].descWriteComplete((chara, desc, status) => {
-          console.log(`Returned status: ${status} for uuid: ${chara}`);
-          if (status === 0) {
-            console.log(`Notifications enabled for ${mac} (${chara})`);
-
-            // Register notification handler after successful enable
-            ble.on[mac].charaNotification((uuid, data, length) => {
-              console.log(
-                `Notification received from ${mac}:`,
-                uuid,
-                ab2hex(data)
-              );
-              const connection = this.connections[mac];
-              // Handle notification data here
-            });
-
-            // Proceed to the next device in the queue
-            this.isConnecting = false;
-            this.processQueue();
-          } else {
-            console.log(`Failed to enable notifications for ${mac}`);
-            this.isConnecting = false;
-            this.processQueue(); // Proceed even if enabling notifications fails
-          }
-        });*/
-      } else {
-        console.log(`Failed to start listener for ${mac}:`, response.message);
-        this.isConnecting = false;
-        this.processQueue(); // Proceed to the next device in the queue
-      }
-    });
-  }
-
   // Method to update the UI
   updateUI(speed, hPWM, voltage) {
     try {
