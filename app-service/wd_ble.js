@@ -91,10 +91,6 @@ class BLE {
     logger.log("=========================================");
     logger.log("Initializing BLE operations", Date.now());
 
-    const engoCmms = new EngoComms();
-    const text = engoCmms.writeTextDefault("yoyo", 100, 100);
-    //logger.log("ENGO text", text);
-
     this.decoder = null; // Initialize decoder to null
     this.engoCmms = null; // Initialize EngoComms to null
     this.devices = {}; // mac (uppercased) → device_name
@@ -102,7 +98,7 @@ class BLE {
     this.deviceQueue = []; // Queue of devices to connect to
     this.isConnecting = false; // Flag to track ongoing connections
     this.expectedDeviceCount = 0; // Expected number of devices to connect to
-
+    this.engoMAC = null;
     //this.scan();
   }
 
@@ -112,10 +108,7 @@ class BLE {
     logger.log("All listeners started. Executing enableCharNotif...");
     for (const mac in this.connections) {
       const services = this.connections[mac].services; // Retrieve services for the device
-      let engoMac;
-      if (this.connections[mac].device.name.startsWith("ENG")) {
-        engoMac = mac;
-      }
+
       if (!services) {
         logger.log(`No services found for ${mac}`);
         continue;
@@ -138,29 +131,53 @@ class BLE {
                 );
                 this.connections[mac].ready = true; // Set the "ready" status
                 ble.on[mac].charaNotification((uuid, data, length) => {
+                  /*
                   logger.log(
                     `Notification received from ${mac}, characteristic: ${uuid}`
                   );
+                  */
                   // Handle notification data here
                   if (uuid === LK_UUID_NOTIFY_CHAR) {
                     const result = this.decoder.frameBuffer(data);
                     if (result) {
                       wdEvent.emit("EUCData", result);
+                      logger.log(
+                        `engoMac : ${this.engoMAC}, engoCmms : ${this.engoCmms}`
+                      );
                       if (
-                        engoMac &&
-                        this.connections[engoMac].ready &&
+                        this.engoMAC &&
+                        // this.connections[this.engoMAC].ready &&
                         this.engoCmms
                       ) {
                         //engoData def
-                        const engoData = this.engoCmms.writeTextDefault(
-                          "Bonjour",
-                          100,
-                          100
+                        const engoSpd = this.engoCmms.writeTextDefault(
+                          "speed : " + result["speed"],
+                          230,
+                          210
                         );
-                        this.write[engoMac].characteristic(
+                        const engoPWM = this.engoCmms.writeTextDefault(
+                          "PWM : " + result["hPWM"],
+                          230,
+                          150
+                        );
+                        const engoVlt = this.engoCmms.writeTextDefault(
+                          "Voltage : " + result["voltage"],
+                          230,
+                          90
+                        );
+                        const engoCLS = this.engoCmms.getClearScreenCmd();
+                        logger.log("sending ENGO data");
+                        const engoData = new Uint8Array([
+                          ...engoCLS,
+                          ...engoSpd,
+                          ...engoPWM,
+                          ...engoVlt,
+                        ]).buffer;
+
+                        ble.write[this.engoMAC].characteristic(
                           ENGO_UUID_RX_CHAR,
                           engoData,
-                          (write_without_response = false)
+                          (write_without_response = true)
                         );
                       }
                     }
@@ -254,6 +271,7 @@ class BLE {
         if (name.startsWith("RVR")) {
           this.listen(mac, varia_services, callback);
         } else if (name.startsWith("ENG")) {
+          this.engoMAC = mac;
           this.engoCmms = new EngoComms();
           this.listen(mac, engo_services, callback);
         } else if (name.startsWith("LK")) {
