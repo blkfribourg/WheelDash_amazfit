@@ -53,7 +53,7 @@ AppService({
     logger.log(`service onInit(${e})`);
 
     this.BLE = new BLE();
-    this.BLE.init();
+    // this.BLE.init();
     BLEMaster.SetDebugLevel(3);
     wdEvent.on("deviceQueue", (deviceQueue) => {
       logger.log("deviceQueue", deviceQueue);
@@ -87,7 +87,7 @@ Page({
 
 class BLE {
   // initial setup
-  init() {
+  constructor() {
     logger.log("=========================================");
     logger.log("Initializing BLE operations", Date.now());
 
@@ -104,127 +104,150 @@ class BLE {
 
   // the mac of a device you are connecting to
 
-  enableCharNotif() {
+  enableCharNotif(mac, callback) {
     logger.log("All listeners started. Executing enableCharNotif...");
-    for (const mac in this.connections) {
-      const services = this.connections[mac].services; // Retrieve services for the device
 
-      if (!services) {
-        logger.log(`No services found for ${mac}`);
-        continue;
-      }
+    const services = this.connections[mac].services; // Retrieve services for the device
 
-      for (const service_uuid in services) {
-        const characteristics = services[service_uuid];
-        for (const char_uuid in characteristics) {
-          const descriptors = characteristics[char_uuid];
-          if (descriptors.includes("2902")) {
-            logger.log(
-              `Enabling notifications for ${mac}, characteristic: ${char_uuid}`
-            );
-            ble.write[mac].enableCharaNotifications(char_uuid, true);
+    if (!services) {
+      logger.log(`No services found for ${mac}`);
+      return;
+    }
 
-            ble.on[mac].descWriteComplete((chara, desc, status) => {
-              if (status === 0) {
-                logger.log(
-                  `Notifications enabled for ${mac}, characteristic: ${chara}`
-                );
-                this.connections[mac].ready = true; // Set the "ready" status
-                ble.on[mac].charaNotification((uuid, data, length) => {
-                  /*
+    for (const service_uuid in services) {
+      const characteristics = services[service_uuid];
+      for (const char_uuid in characteristics) {
+        const descriptors = characteristics[char_uuid];
+        if (descriptors.includes("2902")) {
+          logger.log(
+            `Enabling notifications for ${mac}, characteristic: ${char_uuid}`
+          );
+          ble.write[mac].enableCharaNotifications(char_uuid, true);
+
+          ble.on[mac].descWriteComplete((chara, desc, status) => {
+            if (status === 0) {
+              logger.log(
+                `Notifications enabled for ${mac}, characteristic: ${chara}`
+              );
+              callback();
+              //this.connections[mac].ready = true; // Set the "ready" status
+              ble.on[mac].charaNotification((uuid, data, length) => {
+                /*
                   logger.log(
                     `Notification received from ${mac}, characteristic: ${uuid}`
                   );
                   */
-                  // Handle notification data here
-                  if (uuid === LK_UUID_NOTIFY_CHAR) {
-                    const result = this.decoder.frameBuffer(data);
-                    if (result) {
-                      wdEvent.emit("EUCData", result);
-                      logger.log(
-                        `engoMac : ${this.engoMAC}, engoCmms : ${this.engoCmms}`
+                // Handle notification data here
+                if (uuid === LK_UUID_NOTIFY_CHAR) {
+                  const result = this.decoder.frameBuffer(data);
+                  if (result) {
+                    wdEvent.emit("EUCData", result);
+                    logger.log(
+                      `engoMac : ${this.engoMAC}, engoCmms : ${this.engoCmms}`
+                    );
+                    if (
+                      this.engoMAC &&
+                      ble.write[this.engoMAC] &&
+                      this.engoCmms
+                    ) {
+                      //engoData def
+                      const engoSpd = this.engoCmms.writeTextDefault(
+                        "speed : " + result["speed"],
+                        230,
+                        210
                       );
-                      if (
-                        this.engoMAC &&
-                        // this.connections[this.engoMAC].ready &&
-                        this.engoCmms
-                      ) {
-                        //engoData def
-                        const engoSpd = this.engoCmms.writeTextDefault(
-                          "speed : " + result["speed"],
-                          230,
-                          210
-                        );
-                        const engoPWM = this.engoCmms.writeTextDefault(
-                          "PWM : " + result["hPWM"],
-                          230,
-                          150
-                        );
-                        const engoVlt = this.engoCmms.writeTextDefault(
-                          "Voltage : " + result["voltage"],
-                          230,
-                          90
-                        );
-                        const engoCLS = this.engoCmms.getClearScreenCmd();
-                        logger.log("sending ENGO data");
-                        const engoData = new Uint8Array([
-                          ...engoCLS,
-                          ...engoSpd,
-                          ...engoPWM,
-                          ...engoVlt,
-                        ]).buffer;
+                      const engoPWM = this.engoCmms.writeTextDefault(
+                        "PWM : " + result["hPWM"],
+                        230,
+                        150
+                      );
+                      const engoVlt = this.engoCmms.writeTextDefault(
+                        "Voltage : " + result["voltage"],
+                        230,
+                        90
+                      );
+                      const engoCLS = this.engoCmms.getClearScreenCmd();
+                      logger.log("sending ENGO data");
+                      const engoData = new Uint8Array([
+                        ...engoCLS,
+                        ...engoSpd,
+                        ...engoPWM,
+                        ...engoVlt,
+                      ]).buffer;
 
-                        ble.write[this.engoMAC].characteristic(
-                          ENGO_UUID_RX_CHAR,
-                          engoData,
-                          (write_without_response = true)
-                        );
-                      }
+                      ble.write[this.engoMAC].characteristic(
+                        ENGO_UUID_RX_CHAR,
+                        engoData,
+                        (write_without_response = true)
+                      );
                     }
-                  } else if (uuid === VARIA_UUID_NOTIFY_CHAR) {
-                    const variaData = new Uint8Array(data);
-                    const vehspd = variaData[3] || "--";
-                    const vehdst = variaData[2] || "--";
-                    wdEvent.emit("variaData", { vehdst, vehspd });
                   }
-                });
-              } else {
-                logger.log(
-                  `Failed to enable notifications for ${mac}, characteristic: ${chara}`
-                );
-              }
-            });
-          }
+                } else if (uuid === VARIA_UUID_NOTIFY_CHAR) {
+                  const variaData = new Uint8Array(data);
+                  const vehspd = variaData[3] || "--";
+                  const vehdst = variaData[2] || "--";
+                  wdEvent.emit("variaData", { vehdst, vehspd });
+                }
+              });
+            } else {
+              logger.log(
+                `Failed to enable notifications for ${mac}, characteristic: ${chara}`
+              );
+            }
+          });
         }
       }
     }
   }
 
   processQueue() {
-    if (this.isConnecting || this.deviceQueue.length === 0) {
+    if (this.deviceQueue.length === 0) {
+      // if (this.isConnecting || this.deviceQueue.length === 0) {
       // If no more devices in the queue and all listeners are active, call enableCharNotif
       if (
         this.deviceQueue.length === 0 &&
         Object.keys(this.connections).length >= this.expectedDeviceCount
       ) {
         logger.log("All devices processed. Calling enableCharNotif...");
-        this.enableCharNotif();
+        //  this.enableCharNotif();
       }
       return;
     }
 
     const { mac, name } = this.deviceQueue.shift();
-    this.isConnecting = true;
+    //this.isConnecting = true;
 
     logger.log(`Connecting to device: ${name} (${mac})`);
     this.connect(mac, name, () => {
-      logger.log(`Finished processing device: ${name} (${mac})`);
-      this.isConnecting = false;
-      this.processQueue(); // Proceed to the next device in the queue
+      // this.isConnecting = false;
+      //   this.processQueue(); // Proceed to the next device in the queue
+      if (name.startsWith("RVR")) {
+        this.listen(mac, varia_services, () => {
+          this.enableCharNotif(mac, () => {
+            this.processQueue(); // Proceed to the next device in the queue
+          });
+        });
+      } else if (name.startsWith("ENG")) {
+        this.engoMAC = mac;
+        this.engoCmms = new EngoComms();
+        this.listen(mac, engo_services, () => {
+          this.enableCharNotif(mac, () => {
+            this.processQueue(); // Proceed to the next device in the queue
+          });
+        });
+      } else if (name.startsWith("LK")) {
+        // Initialize the EUC decoder
+        this.decoder = new LKDecoder();
+        this.listen(mac, lk_services, () => {
+          this.enableCharNotif(mac, () => {
+            this.processQueue(); // Proceed to the next device in the queue
+          });
+        });
+      }
     });
   }
 
-  connect(mac, name, callback, attempt = 1, max_attempts = 30, delay = 1000) {
+  connect(mac, name, callback, attempt = 1, max_attempts = 5, delay = 1000) {
     if (this.connections[mac]?.connected) {
       logger.log(`Already connected to ${name} (${mac}). Skipping.`);
       callback();
@@ -266,24 +289,13 @@ class BLE {
           name,
           connected: true,
         };
-
+        callback();
         // Start listening for notifications
-        if (name.startsWith("RVR")) {
-          this.listen(mac, varia_services, callback);
-        } else if (name.startsWith("ENG")) {
-          this.engoMAC = mac;
-          this.engoCmms = new EngoComms();
-          this.listen(mac, engo_services, callback);
-        } else if (name.startsWith("LK")) {
-          // Initialize the EUC decoder
-          this.decoder = new LKDecoder();
-          this.listen(mac, lk_services, callback);
-        }
       }
     });
   }
 
-  listen(mac, services, callback) {
+  listen(mac, services, callback, attempt = 1, max_attempts = 5, delay = 1000) {
     const profile_object = ble.generateProfileObject(services, mac);
     this.connections[mac].services = services; // Store services for later use in enableCharNotif
     const service_uuid = Object.keys(services)[0];
@@ -296,8 +308,25 @@ class BLE {
         logger.log(`Listener started for ${mac}`);
         callback(); // Proceed to the next device in the queue
       } else {
-        logger.log(`Failed to start listener for ${mac}:`, response.message);
-        callback(); // Proceed even if listener fails
+        logger.log(
+          `Failed to start listener for ${mac} (attempt ${attempt}):`,
+          response.message
+        );
+        if (attempt < max_attempts) {
+          setTimeout(() => {
+            this.listen(
+              mac,
+              services,
+              callback,
+              attempt + 1,
+              max_attempts,
+              delay
+            );
+          }, delay);
+        } else {
+          logger.log(`Max attempts reached for starting listener on ${mac}.`);
+          callback(); // Proceed even if listener fails after retries
+        }
       }
     });
   }
