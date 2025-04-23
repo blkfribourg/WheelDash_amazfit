@@ -54,7 +54,7 @@ AppService({
 
     this.BLE = new BLE();
     // this.BLE.init();
-    BLEMaster.SetDebugLevel(3);
+    BLEMaster.SetDebugLevel(2);
     wdEvent.on("deviceQueue", (deviceQueue) => {
       logger.log("deviceQueue", deviceQueue);
       this.BLE.expectedDeviceCount = deviceQueue.length; // Set expected device count
@@ -65,6 +65,7 @@ AppService({
 
   onDestroy() {
     logger.log("service on destroy invoke");
+    this.BLE.killAllConnections();
   },
 });
 
@@ -90,23 +91,29 @@ class BLE {
   constructor() {
     logger.log("=========================================");
     logger.log("Initializing BLE operations", Date.now());
-
+    this.devices = {};
     this.decoder = null; // Initialize decoder to null
     this.engoCmms = null; // Initialize EngoComms to null
-    this.devices = {}; // mac (uppercased) → device_name
     this.connections = {}; // mac → { name, connected, decoder, notifChar}
     this.deviceQueue = []; // Queue of devices to connect to
     this.isConnecting = false; // Flag to track ongoing connections
     this.expectedDeviceCount = 0; // Expected number of devices to connect to
     this.engoMAC = null;
+
     //this.scan();
   }
-
-  // the mac of a device you are connecting to
+  killAllConnections() {
+    logger.log("Killing all connections...");
+    Object.keys(this.connections).forEach((mac) => {
+      ble.quit(mac);
+    });
+  }
 
   enableCharNotif(mac, callback) {
-    logger.log("All listeners started. Executing enableCharNotif...");
-
+    if (this.connections[mac]?.type === "EUC") {
+      logger.log("EUC connected");
+      wdEvent.emit("EUCPaired", true);
+    }
     const services = this.connections[mac].services; // Retrieve services for the device
 
     if (!services) {
@@ -142,9 +149,10 @@ class BLE {
                   const result = this.decoder.frameBuffer(data);
                   if (result) {
                     wdEvent.emit("EUCData", result);
+                    /*
                     logger.log(
                       `engoMac : ${this.engoMAC}, engoCmms : ${this.engoCmms}`
-                    );
+                    );*/
                     if (
                       this.engoMAC &&
                       ble.write[this.engoMAC] &&
@@ -167,7 +175,7 @@ class BLE {
                         90
                       );
                       const engoCLS = this.engoCmms.getClearScreenCmd();
-                      logger.log("sending ENGO data");
+                      // logger.log("sending ENGO data");
                       const engoData = new Uint8Array([
                         ...engoCLS,
                         ...engoSpd,
@@ -204,61 +212,101 @@ class BLE {
     if (this.deviceQueue.length === 0) {
       // if (this.isConnecting || this.deviceQueue.length === 0) {
       // If no more devices in the queue and all listeners are active, call enableCharNotif
-      if (
-        this.deviceQueue.length === 0 &&
-        Object.keys(this.connections).length >= this.expectedDeviceCount
-      ) {
-        logger.log("All devices processed. Calling enableCharNotif...");
-        //  this.enableCharNotif();
-      }
       return;
     }
 
     const { mac, name } = this.deviceQueue.shift();
     //this.isConnecting = true;
-
+    this.connections[mac] = {
+      name,
+      connected: false,
+      callback: null,
+      type: null,
+    };
     logger.log(`Connecting to device: ${name} (${mac})`);
-    this.connect(mac, name, () => {
-      // this.isConnecting = false;
-      //   this.processQueue(); // Proceed to the next device in the queue
-      if (name.startsWith("RVR")) {
-        this.listen(mac, varia_services, () => {
-          this.enableCharNotif(mac, () => {
-            this.processQueue(); // Proceed to the next device in the queue
+    const connCallback = () => {
+      switch (true) {
+        case name.startsWith("RVR"):
+          this.listen(mac, varia_services, () => {
+            this.enableCharNotif(mac, () => {
+              this.processQueue(); // Proceed to the next device in the queue
+            });
           });
-        });
-      } else if (name.startsWith("ENG")) {
-        this.engoMAC = mac;
-        this.engoCmms = new EngoComms();
-        this.listen(mac, engo_services, () => {
-          this.enableCharNotif(mac, () => {
-            this.processQueue(); // Proceed to the next device in the queue
+          break;
+        case name.startsWith("ENG"):
+          this.engoMAC = mac;
+          this.engoCmms = new EngoComms();
+          this.listen(mac, engo_services, () => {
+            this.enableCharNotif(mac, () => {
+              this.processQueue(); // Proceed to the next device in the queue
+            });
           });
-        });
-      } else if (name.startsWith("LK")) {
-        // Initialize the EUC decoder
-        this.decoder = new LKDecoder();
-        this.listen(mac, lk_services, () => {
-          this.enableCharNotif(mac, () => {
-            this.processQueue(); // Proceed to the next device in the queue
+          break;
+        case name.startsWith("LK"):
+          // Initialize the EUC decoder
+          this.decoder = new LKDecoder();
+
+          this.connections[mac].type = "EUC"; // Set the type for this connection
+          logger.log("EUC flag set for", mac);
+          this.listen(mac, lk_services, () => {
+            this.enableCharNotif(mac, () => {
+              this.processQueue(); // Proceed to the next device in the queue
+            });
           });
-        });
+          break;
+        default:
+          logger.log(`Unknown device type for ${name} (${mac}). Skipping.`);
+          this.processQueue();
+          break;
       }
+    };
+    this.connections[mac].callback = connCallback; // Store the callback for later use
+
+    this.connect(mac, name, () => {
+      this.connections[mac].callback();
     });
   }
 
-  connect(mac, name, callback, attempt = 1, max_attempts = 5, delay = 1000) {
+  connect(mac, name, callback, attempt = 1, max_attempts = 50, delay = 1000) {
     if (this.connections[mac]?.connected) {
       logger.log(`Already connected to ${name} (${mac}). Skipping.`);
       callback();
       return;
     }
 
-    logger.log("Connecting to:", name, mac);
     ble.connect(mac, (connect_result) => {
+      // if disconnected, try to reconnect
+      if (connect_result.status === "disconnected") {
+        logger.log(`Device ${mac} disconnected.`);
+        // get mac from bluebooth backend to get the proper device (dirty fix, should do a better implementation)
+
+        mac = connect_result.mac;
+        name = this.connections[mac]?.name;
+        logger.log(`Device ${mac}, ${name} disconnected.`);
+        if (this.connections[mac]?.type === "EUC") {
+          wdEvent.emit("EUCPaired", false);
+        }
+
+        // need to get the pid and destroy the connection
+        // ble.stopListener(mac);
+        // NOTE : in case of disconnection, reconnection is not working : forget to set is_connected to false, to test after a night of sleep
+        this.connections[mac].connected = false;
+        logger.log(
+          "device connection status :",
+          this.connections[mac].connected
+        );
+        setTimeout(
+          () => this.connect(mac, name, this.connections[mac].callback),
+          delay
+        );
+      }
+
       logger.log("Connect result:", JSON.stringify(connect_result));
 
-      if (!connect_result.connected) {
+      if (
+        !connect_result.connected &&
+        connect_result.status !== "disconnected"
+      ) {
         if (attempt < max_attempts) {
           logger.log(
             `Attempt ${attempt} failed for ${name} (${mac}). Retrying in ${
@@ -281,14 +329,13 @@ class BLE {
           logger.log(
             `Connection failed for ${name} (${mac}). Max attempts reached.`
           );
-          callback();
+          //  callback();
         }
-      } else {
+      }
+      if (connect_result.connected) {
         logger.log(`Connected to ${name} (${mac}).`);
-        this.connections[mac] = {
-          name,
-          connected: true,
-        };
+        this.connections[mac].connected = true;
+
         callback();
         // Start listening for notifications
       }

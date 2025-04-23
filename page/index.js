@@ -9,18 +9,42 @@ import BLEMaster, {
 } from "@silver-zepp/easy-ble";
 import * as appService from "@zos/app-service";
 import { queryPermission, requestPermission } from "@zos/app";
+import ExitConfirmation from "../utils/ExitConfirmation";
+import CurrentTime from "../utils/CurrentTime";
+import { exit } from "@zos/router";
+import { createWidget, widget, align } from "@zos/ui";
+
 const { wdEvent } = getApp()._options.globalData;
 const ble = new BLEMaster();
 const AppContext = {
   MainUI: null,
   //LKDecoder: null,
 };
-import { setWakeUpRelaunch } from "@zos/display";
-setWakeUpRelaunch({ relaunch: true });
+
+import { onKey, KEY_UP, KEY_EVENT_CLICK } from "@zos/interaction";
+
+onKey({
+  callback: (key, keyEvent) => {
+    console.log("KEY EVENT: ", key, keyEvent);
+    if (key === 36 && keyEvent === 1) {
+      // HOME BUTTON ACTIVE2
+      console.log("Exit app confirmation");
+      const exitDialog = new ExitConfirmation(() => {
+        console.log("Exit app");
+        exitService();
+        AppContext.MainUI = null;
+        exit();
+      });
+      exitDialog.showExitConfirmation();
+    }
+    return true;
+  },
+});
+
 let thisFile = "pages/index";
 const serviceFile = "app-service/wd_ble";
 const permissions = ["device:os.bg_service"];
-const BLEDevicesNb = 3;
+const BLEDevicesNb = 1;
 function permissionRequest(vm) {
   const [result2] = queryPermission({
     permissions,
@@ -31,15 +55,15 @@ function permissionRequest(vm) {
       permissions,
       callback([result2]) {
         if (result2 === 2) {
-          startTimeService(vm);
+          startService(vm);
         }
       },
     });
   } else if (result2 === 2) {
-    startTimeService(vm);
+    startService();
   }
 }
-function startTimeService(vm) {
+function startService() {
   console.log(`=== start service: ${serviceFile} ===`);
   const result = appService.start({
     url: serviceFile,
@@ -54,7 +78,7 @@ function startTimeService(vm) {
   }
 }
 
-function stopTimeService(vm) {
+function stopService() {
   console.log(`=== stop service: ${serviceFile} ===`);
   appService.stop({
     url: serviceFile,
@@ -66,15 +90,17 @@ function stopTimeService(vm) {
     },
   });
 }
-
+function exitService() {
+  stopService();
+  console.log(`=== exit service: ${serviceFile} ===`);
+  appService.exit();
+}
 Page({
   onInit() {
-    AutoGUI.SetTextSize(20);
-    //AutoGUI.SetPadding(0);
-    //AutoGUI.SetBtnRadius(180);
-    //AutoGUI.SetColor(COLOR_BLUE);
-    //AutoGUI.SetColor(multiplyHexColor(COLOR_WHITE, 0.2));
-    //AutoGUI.SetTextColor(COLOR_GREEN);
+    console.log("sandbox----------------------------------------");
+
+    console.log("end of sandbox---------------------------------");
+
     this.indexPage = new UI();
     this.indexPage.init();
 
@@ -92,16 +118,8 @@ Page({
     console.log("service status %s", vm.state.running);
     permissionRequest(vm);
   },
-  destroy() {
-    stopTimeService(vm);
-    /*
-    Object.keys(this.BLE.connections).forEach((mac) => {
-      if (!ble.quit(mac)) {
-        console.log(`Failed to quit BLE connection for ${mac}`);
-      }
-    });
-    this.indexPage.quit();
-    */
+  onDestroy() {
+    console.log("Page onDestroy");
   },
 });
 class BLE {
@@ -109,7 +127,7 @@ class BLE {
     // this.connections = {};
     this.deviceQueue = [];
     this.expectedDeviceCount = expectedDeviceCount; // Set the expected number of devices
-
+    // wdEvent.emit("deviceQueue", { mac: "00:01:02:03:04:05", name: "LK0203" });
     this.scan();
   }
   scan() {
@@ -176,6 +194,123 @@ class BLE {
 }
 class UI {
   init() {
+    this.time = createWidget(widget.TEXT, {
+      x: 180,
+      y: 80,
+      w: 100,
+      h: 50,
+      text: new CurrentTime().getCurrentTime(),
+      color: 0xffffff,
+      text_size: 30,
+      align_h: align.CENTER_H,
+    });
+    setInterval(() => {
+      if (this.time) {
+        //console.log("Time update");
+        this.time.text = new CurrentTime().getCurrentTime(); // or this.time = new Date();
+      }
+    }, 1000);
+    this.spd = createWidget(widget.TEXT, {
+      x: 155,
+      y: 140,
+      w: 150,
+      h: 150,
+      text: "--",
+      color: 0x999999,
+      text_size: 130,
+      align_h: align.CENTER_H,
+    });
+    this.batVal = createWidget(widget.TEXT, {
+      x: 80,
+      y: 310,
+      w: 80,
+      h: 50,
+      text: "--%",
+      color: 0x999999,
+      text_size: 30,
+      align_h: align.LEFT,
+    });
+    this.tempVal = createWidget(widget.TEXT, {
+      x: 305,
+      y: 310,
+      w: 80,
+      h: 50,
+      text: "--°C",
+      color: 0x999999,
+      text_size: 30,
+      align_h: align.RIGHT,
+    });
+
+    this.PWMArc_bg = createWidget(widget.ARC, {
+      x: 27.5,
+      y: 27.5,
+      w: 410,
+      h: 410,
+      radius: 0,
+      color: 0x333333,
+      start_angle: 150,
+      end_angle: 390,
+      line_width: 25,
+    });
+    this.PWMArc = createWidget(widget.ARC, {
+      x: 27.5,
+      y: 27.5,
+      w: 410,
+      h: 410,
+      radius: 0,
+      color: 0x999999,
+      start_angle: 150,
+      end_angle: 150,
+      line_width: 25,
+    });
+
+    this.batArc_bg = createWidget(widget.ARC, {
+      x: 62.5,
+      y: 62.5,
+      w: 340,
+      h: 340,
+      radius: 0,
+      color: 0x333333,
+      start_angle: 150,
+      end_angle: 220,
+      line_width: 25,
+    });
+    this.batArc = createWidget(widget.ARC, {
+      x: 62.5,
+      y: 62.5,
+      w: 340,
+      h: 340,
+      radius: 0,
+      color: 0x999999,
+      start_angle: 150,
+      end_angle: 150,
+      line_width: 25,
+    });
+
+    this.tempArc_bg = createWidget(widget.ARC, {
+      x: 62.5,
+      y: 62.5,
+      w: 340,
+      h: 340,
+      radius: 0,
+      color: 0x333333,
+      start_angle: 390,
+      end_angle: 320,
+      line_width: 25,
+    });
+    this.tempArc = createWidget(widget.ARC, {
+      x: 62.5,
+      y: 62.5,
+      w: 340,
+      h: 340,
+      radius: 0,
+      color: 0x999999,
+      start_angle: 390,
+      end_angle: 390,
+      line_width: 25,
+    });
+
+    /*
     const gui = new AutoGUI();
     // add a text widget
     this.spd_txt = gui.text("Spd:");
@@ -191,37 +326,93 @@ class UI {
 
     // finally render the GUI
     gui.render();
+*/
     this.checkForUpdate();
   }
+
+  computeArcAngle(value, max, arc, reverse) {
+    const range = arc.end_angle - arc.start_angle;
+    let ratio = value / max;
+    if (reverse) {
+      ratio = -ratio;
+    }
+    const angle = arc.start_angle + range * ratio;
+    return angle;
+  }
+
   drawGUI() {
     this.mainView();
   }
 
   mainView() {}
   checkForUpdate() {
+    wdEvent.on("EUCPaired", (isPaired) => {
+      console.log("EUCPaired event received:", isPaired);
+      this.isEUCConnected(isPaired);
+    });
     wdEvent.on("EUCData", (result) => {
-      const { speed, hPWM, voltage } = result;
-      this.updateUI(speed, hPWM, voltage);
+      // console.log(JSON.stringify(result));
+      const { hPWM, speed, temperature, battery } = result;
+      this.updateUI(hPWM, speed, temperature, battery);
     });
 
     wdEvent.on("variaData", (result) => {
+      /*
       const { vehdst, vehspd } = result;
       this.updateVariaUI(vehspd, vehdst);
+      */
     });
   }
+  isEUCConnected(isPaired) {
+    const ui = AppContext.MainUI;
+    if (isPaired === true) {
+      ui.spd.color = 0xffffff;
+      ui.PWMArc.color = 0x3366cc;
+      ui.tempArc.color = 0x58ba1a;
+      ui.batArc.color = 0x58ba1a;
+    } else {
+      ui.spd.color = 0x999999;
+      ui.PWMArc.color = 0x999999;
+      ui.tempArc.color = 0x999999;
+      ui.batArc.color = 0x999999;
+    }
+  }
   // Method to update the UI
-  updateUI(speed, hPWM, voltage) {
+  updateUI(hPWM, speed, temperature, battery) {
     try {
       const ui = AppContext.MainUI;
-      if (ui?.spd_txt?.update) {
-        ui.spd_txt.update({ text: `Spd : ${speed}` });
-      }
-      if (ui?.pwm_txt?.update) {
-        ui.pwm_txt.update({ text: `PWM : ${hPWM}` });
-      }
-      if (ui?.vlt_txt?.update) {
-        ui.vlt_txt.update({ text: `Vlt : ${voltage}` });
-      }
+      //console.log("speed", speed);
+      const speedText =
+        speed !== undefined && speed !== null ? Math.round(speed) : "--";
+      //  console.log("speedText", speedText);
+      const tempText =
+        temperature !== undefined && temperature !== null
+          ? Math.round(temperature)
+          : "--";
+      const batteryText =
+        battery !== undefined && battery !== null ? Math.round(battery) : "--";
+      ui.spd.text = speedText.toString();
+      ui.batVal.text = batteryText + " %";
+      ui.tempVal.text = tempText + " °C";
+
+      ui.PWMArc.end_angle = this.computeArcAngle(
+        hPWM,
+        100,
+        ui.PWMArc_bg,
+        false
+      );
+      ui.tempArc.end_angle = this.computeArcAngle(
+        temperature,
+        100,
+        ui.tempArc_bg,
+        false
+      );
+      ui.batArc.end_angle = this.computeArcAngle(
+        battery,
+        100,
+        ui.batArc_bg,
+        false
+      );
     } catch (error) {
       console.log("Error updating UI:", error);
     }
