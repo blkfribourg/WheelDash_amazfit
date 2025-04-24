@@ -11,6 +11,7 @@ import * as appService from "@zos/app-service";
 import { queryPermission, requestPermission } from "@zos/app";
 import ExitConfirmation from "../utils/ExitConfirmation";
 import CurrentTime from "../utils/CurrentTime";
+import Alarm from "../utils/Alarm";
 import { exit } from "@zos/router";
 import { createWidget, widget, align } from "@zos/ui";
 
@@ -98,7 +99,7 @@ function exitService() {
 Page({
   onInit() {
     console.log("sandbox----------------------------------------");
-
+    const alarmMonitor = new Alarm();
     console.log("end of sandbox---------------------------------");
 
     this.indexPage = new UI();

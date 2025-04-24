@@ -54,7 +54,7 @@ AppService({
 
     this.BLE = new BLE();
     // this.BLE.init();
-    BLEMaster.SetDebugLevel(2);
+    BLEMaster.SetDebugLevel(0);
     wdEvent.on("deviceQueue", (deviceQueue) => {
       logger.log("deviceQueue", deviceQueue);
       this.BLE.expectedDeviceCount = deviceQueue.length; // Set expected device count

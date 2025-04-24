@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@silver-zepp/autogui": "^1.2.9",
-    "@silver-zepp/easy-ble": "github:Marco4413/zepp-easy-ble"
+    "@silver-zepp/easy-ble": "github:Marco4413/zepp-easy-ble",
+    "@silver-zepp/easy-media": "^1.1.4"
   }
 }
