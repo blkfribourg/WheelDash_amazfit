@@ -25,7 +25,8 @@
       "module": {
         "page": {
           "pages": [
-            "page/index"
+            "page/index",
+            "page/connectMenu"
           ]
         },"app-service": {
       "services": ["app-service/wd_ble"]}

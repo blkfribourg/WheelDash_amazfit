@@ -14,6 +14,7 @@ import CurrentTime from "../utils/CurrentTime";
 import Alarm from "../utils/Alarm";
 import { exit } from "@zos/router";
 import { createWidget, widget, align } from "@zos/ui";
+import { push } from "@zos/router";
 
 const { wdEvent } = getApp()._options.globalData;
 const ble = new BLEMaster();
@@ -37,6 +38,13 @@ onKey({
         exit();
       });
       exitDialog.showExitConfirmation();
+    }
+    if (key === 93 && keyEvent === 1) {
+      //go to connect menu
+
+      push({
+        url: "page/connectMenu",
+      });
     }
     return true;
   },
@@ -96,20 +104,24 @@ function exitService() {
   console.log(`=== exit service: ${serviceFile} ===`);
   appService.exit();
 }
+const fakeRes = { hPWM: 3, speed: 23, temperature: 45, battery: 50 };
 Page({
   onInit() {
     console.log("sandbox----------------------------------------");
     const alarmMonitor = new Alarm();
+
     console.log("end of sandbox---------------------------------");
 
     this.indexPage = new UI();
     this.indexPage.init();
 
     this.BLE = new BLE();
+
     this.BLE.init(BLEDevicesNb);
     BLEMaster.SetDebugLevel(3);
 
     AppContext.MainUI = this.indexPage;
+    wdEvent.emit("EUCData", fakeRes);
   },
   build() {
     const vm = this;
@@ -364,6 +376,7 @@ class UI {
       */
     });
   }
+
   isEUCConnected(isPaired) {
     const ui = AppContext.MainUI;
     if (isPaired === true) {
