@@ -61,6 +61,9 @@ AppService({
       this.BLE.deviceQueue = deviceQueue;
       this.BLE.processQueue();
     });
+    wdEvent.on("getBLEConnections", () => {
+      this.BLE.communicateDeviceStatus();
+    });
   },
 
   onDestroy() {
@@ -110,10 +113,6 @@ class BLE {
   }
 
   enableCharNotif(mac, callback) {
-    if (this.connections[mac]?.type === "EUC") {
-      logger.log("EUC connected");
-      wdEvent.emit("EUCPaired", true);
-    }
     const services = this.connections[mac].services; // Retrieve services for the device
 
     if (!services) {
@@ -209,6 +208,7 @@ class BLE {
   }
 
   processQueue() {
+    this.communicateDeviceStatus(); //for UI updating
     if (this.deviceQueue.length === 0) {
       // if (this.isConnecting || this.deviceQueue.length === 0) {
       // If no more devices in the queue and all listeners are active, call enableCharNotif
@@ -222,13 +222,16 @@ class BLE {
       connected: false,
       callback: null,
       type: null,
+      ready: false,
     };
     logger.log(`Connecting to device: ${name} (${mac})`);
     const connCallback = () => {
       switch (true) {
         case name.startsWith("RVR"):
+          this.connections[mac].type = "VARIA";
           this.listen(mac, varia_services, () => {
             this.enableCharNotif(mac, () => {
+              this.connections[mac].ready = true; // Set the "ready" status
               this.processQueue(); // Proceed to the next device in the queue
             });
           });
@@ -236,8 +239,10 @@ class BLE {
         case name.startsWith("ENG"):
           this.engoMAC = mac;
           this.engoCmms = new EngoComms();
+          this.connections[mac].type = "ENGO";
           this.listen(mac, engo_services, () => {
             this.enableCharNotif(mac, () => {
+              this.connections[mac].ready = true; // Set the "ready" status
               this.processQueue(); // Proceed to the next device in the queue
             });
           });
@@ -250,6 +255,7 @@ class BLE {
           logger.log("EUC flag set for", mac);
           this.listen(mac, lk_services, () => {
             this.enableCharNotif(mac, () => {
+              this.connections[mac].ready = true; // Set the "ready" status
               this.processQueue(); // Proceed to the next device in the queue
             });
           });
@@ -283,14 +289,13 @@ class BLE {
         mac = connect_result.mac;
         name = this.connections[mac]?.name;
         logger.log(`Device ${mac}, ${name} disconnected.`);
-        if (this.connections[mac]?.type === "EUC") {
-          wdEvent.emit("EUCPaired", false);
-        }
 
         // need to get the pid and destroy the connection
         // ble.stopListener(mac);
         // NOTE : in case of disconnection, reconnection is not working : forget to set is_connected to false, to test after a night of sleep
         this.connections[mac].connected = false;
+        this.connections[mac].ready = false;
+        this.communicateDeviceStatus(); //for UI updating
         logger.log(
           "device connection status :",
           this.connections[mac].connected
@@ -376,5 +381,12 @@ class BLE {
         }
       }
     });
+  }
+  communicateDeviceStatus() {
+    const BLEConnections = Object.keys(this.connections).map((mac) => {
+      const { name, connected, type, ready } = this.connections[mac];
+      return { mac, name, connected, type, ready };
+    });
+    wdEvent.emit("BLEConnections", BLEConnections);
   }
 }

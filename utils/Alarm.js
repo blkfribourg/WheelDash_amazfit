@@ -4,9 +4,9 @@ import { Vibrator, VIBRATOR_SCENE_DURATION } from "@zos/sensor";
 import { SoundPlayer } from "@silver-zepp/easy-media";
 export default class Alarm {
   constructor() {
-    this.PWM_thr = 0; // threshold for PWM alarm
-    this.speed_thr = 0; // threshold for speed alarm
-    this.temp_thr = 0; // threshold for temperature alarm
+    this.PWM_thr = 70; // threshold for PWM alarm
+    this.speed_thr = 25; // threshold for speed alarm
+    this.temp_thr = 40; // threshold for temperature alarm
     console.log("=== starting alarm player ===");
     this.player = new SoundPlayer();
     this.vibrator = new Vibrator();

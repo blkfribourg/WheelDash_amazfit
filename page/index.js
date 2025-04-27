@@ -115,13 +115,26 @@ Page({
     this.indexPage = new UI();
     this.indexPage.init();
 
-    this.BLE = new BLE();
+    //this.BLE = new BLE();
 
-    this.BLE.init(BLEDevicesNb);
-    BLEMaster.SetDebugLevel(3);
+    //this.BLE.init(BLEDevicesNb);
+    //BLEMaster.SetDebugLevel(3);
 
     AppContext.MainUI = this.indexPage;
-    wdEvent.emit("EUCData", fakeRes);
+
+    wdEvent.on("BLEConnections", (result) => {
+      //check if a device with the type "EUC" is connected and ready:
+
+      if (result) {
+        const isConnected = result.some(
+          (device) => device.type === "EUC" && device.connected && device.ready
+        );
+
+        AppContext.MainUI.isEUCConnected(isConnected);
+      }
+    });
+    wdEvent.emit("getBLEConnections", true); // request BLE connections status
+    //  wdEvent.emit("EUCData", fakeRes);
   },
   build() {
     const vm = this;
@@ -129,82 +142,15 @@ Page({
     vm.state.running = services.includes(serviceFile);
 
     console.log("service status %s", vm.state.running);
-    permissionRequest(vm);
+    if (!vm.state.running) {
+      permissionRequest(vm);
+    }
   },
   onDestroy() {
     console.log("Page onDestroy");
   },
 });
-class BLE {
-  init(expectedDeviceCount) {
-    // this.connections = {};
-    this.deviceQueue = [];
-    this.expectedDeviceCount = expectedDeviceCount; // Set the expected number of devices
-    // wdEvent.emit("deviceQueue", { mac: "00:01:02:03:04:05", name: "LK0203" });
-    this.scan();
-  }
-  scan() {
-    console.log("Starting BLE scan...");
-    const scan_success = ble.startScan(
-      (scan_result) => {
-        const device = ble.get.devices();
-        const keys = Object.keys(device);
 
-        for (let i = 0; i < keys.length; i++) {
-          const device_mac = keys[i];
-          const device_name = device[keys[i]].dev_name;
-          /*
-          if (this.connections[device_mac]?.connected) {
-            console.log(
-              `Already connected to ${device_name} (${device_mac}). Skipping.`
-            );
-            continue;
-          }
-*/
-          // Check if the device is already in the queue
-          const isAlreadyInQueue = this.deviceQueue.some(
-            (queuedDevice) => queuedDevice.mac === device_mac
-          );
-
-          if (isAlreadyInQueue) {
-            console.log(
-              `Device ${device_name} (${device_mac}) is already in the queue. Skipping.`
-            );
-            continue;
-          }
-
-          const deviceTypes = [
-            { prefix: "LK", name: "LK EUC" },
-            { prefix: "ENG", name: "Engo" },
-            { prefix: "RVR", name: "Varia" },
-          ];
-
-          for (const { prefix, name } of deviceTypes) {
-            if (device_name && device_name.startsWith(prefix)) {
-              console.log(`${name} found, adding to queue:`, device_mac);
-              this.deviceQueue.push({ mac: device_mac, name: device_name });
-
-              // Stop scanning if we have enough devices
-              if (this.deviceQueue.length >= this.expectedDeviceCount) {
-                console.log("Expected devices found. Stopping scan.");
-                ble.stopScan();
-                wdEvent.emit("deviceQueue", this.deviceQueue);
-                //   this.processQueue(); // Start processing the connection queue
-                return;
-              }
-              break;
-            }
-          }
-        }
-      },
-      { allow_duplicates: true } // Ensure duplicates are allowed to keep scanning
-    );
-
-    if (!scan_success) {
-      console.log("Failed to start BLE scan.");
-    }
-  }
-}
 class UI {
   init() {
     this.time = createWidget(widget.TEXT, {
@@ -353,16 +299,9 @@ class UI {
     return angle;
   }
 
-  drawGUI() {
-    this.mainView();
-  }
-
-  mainView() {}
+  checkEUCConnection() {}
   checkForUpdate() {
-    wdEvent.on("EUCPaired", (isPaired) => {
-      console.log("EUCPaired event received:", isPaired);
-      this.isEUCConnected(isPaired);
-    });
+    this.checkEUCConnection();
     wdEvent.on("EUCData", (result) => {
       // console.log(JSON.stringify(result));
       const { hPWM, speed, temperature, battery } = result;
