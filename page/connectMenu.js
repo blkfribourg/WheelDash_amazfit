@@ -79,7 +79,7 @@ Page({
       this.BLEScan = new BLEScan();
       return;
     }
-    menuUI.buildConnectMenu(BLEConnections);
+    // AppContext.MenuUI.buildConnectMenu(BLEConnections);
   },
   onDestroy() {
     console.log("Menu onDestroy");
@@ -119,31 +119,34 @@ class BLEScan {
 
           const deviceTypes = [
             { prefix: "LK", type: "EUC" },
-            { prefix: "ENG", type: "Engo Smartglasses" },
+            { prefix: "ENGO", type: "Engo Smartglasses" },
             { prefix: "RVR", type: "Varia Radar" },
           ];
 
-          for (const { prefix, type } of deviceTypes) {
-            if (device_name && device_name.startsWith(prefix)) {
-              console.log(`${type} found, adding to queue:`, device_mac);
-              AppContext.deviceQueue.push({
-                mac: device_mac,
-                name: device_name,
-                type: type,
-              });
-              AppContext.MenuUI.buildConnectMenu(AppContext.deviceQueue);
-              break;
-            } else {
-              // note this part is to be removed in the final version
-              console.log(`unknow type found, adding to queue:`, device_mac);
-              AppContext.deviceQueue.push({
-                mac: device_mac,
-                name: device_name,
-                type: "Unknown",
-              });
-              AppContext.MenuUI.buildConnectMenu(AppContext.deviceQueue);
-              break;
+          let matched = false;
+          if (device_name) {
+            for (const { prefix, type } of deviceTypes) {
+              if (device_name.startsWith(prefix)) {
+                console.log(`${type} found, adding to queue:`, device_mac);
+                AppContext.deviceQueue.push({
+                  mac: device_mac,
+                  name: device_name,
+                  type: type,
+                });
+                AppContext.MenuUI.buildConnectMenu(AppContext.deviceQueue);
+                matched = true;
+                break;
+              }
             }
+          }
+          if (!matched) {
+            console.log(`unknown type found, adding to queue:`, device_mac);
+            AppContext.deviceQueue.push({
+              mac: device_mac,
+              name: device_name,
+              type: "Unknown",
+            });
+            AppContext.MenuUI.buildConnectMenu(AppContext.deviceQueue);
           }
         }
       },
@@ -317,11 +320,11 @@ class ConnectionManagerUI {
       } else if (device.connected === true && device.ready === false) {
         status = "connecting";
       } else {
-        status = "disconnected";
+        status = "notConnected";
       }
-
+      console.log("Device status:", device.name, ":", status);
       switch (status) {
-        case "disconnected":
+        case "notConnected":
           // Use stored checked status or default to false
           const checked = this.deviceSwitchStatus[device.mac] || false;
           const slideSwitch = this.group.createWidget(widget.SLIDE_SWITCH, {

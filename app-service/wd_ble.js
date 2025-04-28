@@ -54,7 +54,7 @@ AppService({
 
     this.BLE = new BLE();
     // this.BLE.init();
-    BLEMaster.SetDebugLevel(0);
+    BLEMaster.SetDebugLevel(3);
     wdEvent.on("deviceQueue", (deviceQueue) => {
       logger.log("deviceQueue", deviceQueue);
       this.BLE.expectedDeviceCount = deviceQueue.length; // Set expected device count
@@ -135,6 +135,7 @@ class BLE {
               logger.log(
                 `Notifications enabled for ${mac}, characteristic: ${chara}`
               );
+
               callback();
               //this.connections[mac].ready = true; // Set the "ready" status
               ble.on[mac].charaNotification((uuid, data, length) => {
@@ -208,8 +209,8 @@ class BLE {
   }
 
   processQueue() {
-    this.communicateDeviceStatus(); //for UI updating
     if (this.deviceQueue.length === 0) {
+      this.communicateDeviceStatus();
       // if (this.isConnecting || this.deviceQueue.length === 0) {
       // If no more devices in the queue and all listeners are active, call enableCharNotif
       return;
@@ -229,6 +230,7 @@ class BLE {
       switch (true) {
         case name.startsWith("RVR"):
           this.connections[mac].type = "VARIA";
+          this.communicateDeviceStatus(); //for UI updating
           this.listen(mac, varia_services, () => {
             this.enableCharNotif(mac, () => {
               this.connections[mac].ready = true; // Set the "ready" status
@@ -240,6 +242,7 @@ class BLE {
           this.engoMAC = mac;
           this.engoCmms = new EngoComms();
           this.connections[mac].type = "ENGO";
+          this.communicateDeviceStatus(); //for UI updating
           this.listen(mac, engo_services, () => {
             this.enableCharNotif(mac, () => {
               this.connections[mac].ready = true; // Set the "ready" status
@@ -252,6 +255,7 @@ class BLE {
           this.decoder = new LKDecoder();
 
           this.connections[mac].type = "EUC"; // Set the type for this connection
+          this.communicateDeviceStatus(); //for UI updating
           logger.log("EUC flag set for", mac);
           this.listen(mac, lk_services, () => {
             this.enableCharNotif(mac, () => {
@@ -294,8 +298,9 @@ class BLE {
         // ble.stopListener(mac);
         // NOTE : in case of disconnection, reconnection is not working : forget to set is_connected to false, to test after a night of sleep
         this.connections[mac].connected = false;
-        this.connections[mac].ready = false;
+
         this.communicateDeviceStatus(); //for UI updating
+        this.connections[mac].ready = false; // Set the "ready" status after communicating disconnection to avoid setting status to unconnected (and display slideswitches on UI)
         logger.log(
           "device connection status :",
           this.connections[mac].connected
@@ -340,7 +345,7 @@ class BLE {
       if (connect_result.connected) {
         logger.log(`Connected to ${name} (${mac}).`);
         this.connections[mac].connected = true;
-
+        //  this.communicateDeviceStatus(); //for UI updating
         callback();
         // Start listening for notifications
       }
