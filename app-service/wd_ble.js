@@ -1,15 +1,10 @@
 import { log } from "@zos/utils";
-import { EventBus } from "@zos/utils";
-import BLEMaster, {
-  PERMISSIONS,
-  ab2hex,
-  ab2num,
-  ab2str,
-} from "@silver-zepp/easy-ble";
+import BLEMaster from "@silver-zepp/easy-ble";
 import LKDecoder from "../utils/LKDecoder";
 import EngoComms from "../utils/EngoComms";
-import * as appServiceMgr from "@zos/app-service";
+
 const { wdEvent } = getApp()._options.globalData;
+
 const ble = new BLEMaster();
 const logger = log.getLogger("BLE.background");
 const LK_UUID_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb";
@@ -51,18 +46,22 @@ const engo_services = {
 AppService({
   onInit(e) {
     logger.log(`service onInit(${e})`);
-
     this.BLE = new BLE();
-    // this.BLE.init();
-    BLEMaster.SetDebugLevel(3);
+
     wdEvent.on("deviceQueue", (deviceQueue) => {
+      ble.stopScan(); // Stop scanning when deviceQueue is received
       logger.log("deviceQueue", deviceQueue);
-      this.BLE.expectedDeviceCount = deviceQueue.length; // Set expected device count
+      // Only create BLEMaster when deviceQueue is received
+
       this.BLE.deviceQueue = deviceQueue;
       this.BLE.processQueue();
     });
     wdEvent.on("getBLEConnections", () => {
       this.BLE.communicateDeviceStatus();
+    });
+    // Add scan event handler
+    wdEvent.on("startScan", () => {
+      this.BLE.scan();
     });
   },
 
@@ -100,10 +99,41 @@ class BLE {
     this.connections = {}; // mac → { name, connected, decoder, notifChar}
     this.deviceQueue = []; // Queue of devices to connect to
     this.isConnecting = false; // Flag to track ongoing connections
-    this.expectedDeviceCount = 0; // Expected number of devices to connect to
     this.engoMAC = null;
 
     //this.scan();
+  }
+  getDeviceType(name) {
+    if (!name) return "Unknown";
+    if (name.startsWith("LK")) return "EUC";
+    if (name.startsWith("ENGO")) return "Engo Smartglasses";
+    if (name.startsWith("RVR")) return "Varia Radar";
+    return "Unknown";
+  }
+  scan() {
+    logger.log("Starting BLE scan...");
+    this._scanDeviceQueue = [];
+    ble.startScan(
+      () => {
+        const devices = ble.get.devices();
+        Object.keys(devices).forEach((mac) => {
+          const name = devices[mac].dev_name;
+          if (!this._scanDeviceQueue.some((d) => d.mac === mac)) {
+            this._scanDeviceQueue.push({
+              mac,
+              name,
+              type: this.getDeviceType(name),
+            });
+          }
+        });
+        // Emit scan result to pages
+        wdEvent.emit("scanResult", this._scanDeviceQueue);
+      },
+      { allow_duplicates: true }
+    );
+  }
+  stopScan() {
+    ble.stopScan();
   }
   killAllConnections() {
     logger.log("Killing all connections...");
@@ -211,13 +241,10 @@ class BLE {
   processQueue() {
     if (this.deviceQueue.length === 0) {
       this.communicateDeviceStatus();
-      // if (this.isConnecting || this.deviceQueue.length === 0) {
-      // If no more devices in the queue and all listeners are active, call enableCharNotif
       return;
     }
 
     const { mac, name } = this.deviceQueue.shift();
-    //this.isConnecting = true;
     this.connections[mac] = {
       name,
       connected: false,
@@ -227,40 +254,39 @@ class BLE {
     };
     logger.log(`Connecting to device: ${name} (${mac})`);
     const connCallback = () => {
-      switch (true) {
-        case name.startsWith("RVR"):
+      const type = this.getDeviceType(name);
+      switch (type) {
+        case "VARIA":
           this.connections[mac].type = "VARIA";
-          this.communicateDeviceStatus(); //for UI updating
+          this.communicateDeviceStatus();
           this.listen(mac, varia_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true; // Set the "ready" status
-              this.processQueue(); // Proceed to the next device in the queue
+              this.connections[mac].ready = true;
+              this.processQueue();
             });
           });
           break;
-        case name.startsWith("ENG"):
+        case "ENGO":
           this.engoMAC = mac;
           this.engoCmms = new EngoComms();
           this.connections[mac].type = "ENGO";
-          this.communicateDeviceStatus(); //for UI updating
+          this.communicateDeviceStatus();
           this.listen(mac, engo_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true; // Set the "ready" status
-              this.processQueue(); // Proceed to the next device in the queue
+              this.connections[mac].ready = true;
+              this.processQueue();
             });
           });
           break;
-        case name.startsWith("LK"):
-          // Initialize the EUC decoder
+        case "EUC":
           this.decoder = new LKDecoder();
-
-          this.connections[mac].type = "EUC"; // Set the type for this connection
-          this.communicateDeviceStatus(); //for UI updating
+          this.connections[mac].type = "EUC";
+          this.communicateDeviceStatus();
           logger.log("EUC flag set for", mac);
           this.listen(mac, lk_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true; // Set the "ready" status
-              this.processQueue(); // Proceed to the next device in the queue
+              this.connections[mac].ready = true;
+              this.processQueue();
             });
           });
           break;
@@ -270,7 +296,7 @@ class BLE {
           break;
       }
     };
-    this.connections[mac].callback = connCallback; // Store the callback for later use
+    this.connections[mac].callback = connCallback;
 
     this.connect(mac, name, () => {
       this.connections[mac].callback();
@@ -289,9 +315,9 @@ class BLE {
       if (connect_result.status === "disconnected") {
         logger.log(`Device ${mac} disconnected.`);
         // get mac from bluebooth backend to get the proper device (dirty fix, should do a better implementation)
-
         mac = connect_result.mac;
         name = this.connections[mac]?.name;
+
         logger.log(`Device ${mac}, ${name} disconnected.`);
 
         // need to get the pid and destroy the connection
@@ -304,6 +330,10 @@ class BLE {
         logger.log(
           "device connection status :",
           this.connections[mac].connected
+        );
+        wdEvent.emit(
+          "bleLog",
+          "device connection status :" + this.connections[mac].connected
         );
         setTimeout(
           () => this.connect(mac, name, this.connections[mac].callback),
@@ -365,10 +395,6 @@ class BLE {
         logger.log(`Listener started for ${mac}`);
         callback(); // Proceed to the next device in the queue
       } else {
-        logger.log(
-          `Failed to start listener for ${mac} (attempt ${attempt}):`,
-          response.message
-        );
         if (attempt < max_attempts) {
           setTimeout(() => {
             this.listen(
@@ -388,10 +414,12 @@ class BLE {
     });
   }
   communicateDeviceStatus() {
+    logger.log("communicateDeviceStatus called");
     const BLEConnections = Object.keys(this.connections).map((mac) => {
       const { name, connected, type, ready } = this.connections[mac];
       return { mac, name, connected, type, ready };
     });
+    logger.log("Emitting BLEConnections:", BLEConnections);
     wdEvent.emit("BLEConnections", BLEConnections);
   }
 }

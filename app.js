@@ -4,6 +4,7 @@ import { setWakeUpRelaunch } from "@zos/display";
 App({
   globalData: {
     wdEvent: new EventBus(),
+    bleDevices: [],
   },
   onCreate(options) {
     console.log("app on create invoke");
