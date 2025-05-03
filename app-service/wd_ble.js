@@ -1,7 +1,7 @@
 import { log } from "@zos/utils";
 import BLEMaster from "@silver-zepp/easy-ble";
 import LKDecoder from "../utils/LKDecoder";
-import EngoComms from "../utils/EngoComms";
+import EngoComm from "../utils/EngoComm";
 
 const { wdEvent } = getApp()._options.globalData;
 
@@ -10,6 +10,8 @@ const logger = log.getLogger("BLE.background");
 const LK_UUID_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb";
 const VARIA_UUID_NOTIFY_CHAR = "6a4e3203-667b-11e3-949a-0800200c9a66";
 const ENGO_UUID_RX_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cba";
+const ENGO_UUID_TX_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cb8";
+const ENGO_UUID_GEST_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cbb"; // TX characteristic UUID for ENGO
 
 const lk_services = {
   // service #1
@@ -95,7 +97,7 @@ class BLE {
     logger.log("Initializing BLE operations", Date.now());
     this.devices = {};
     this.decoder = null; // Initialize decoder to null
-    this.engoCmms = null; // Initialize EngoComms to null
+    this.engoComm = null; // Initialize engoComm to null
     this.connections = {}; // mac → { name, connected, decoder, notifChar}
     this.deviceQueue = []; // Queue of devices to connect to
     this.isConnecting = false; // Flag to track ongoing connections
@@ -175,56 +177,76 @@ class BLE {
                   );
                   */
                 // Handle notification data here
-                if (uuid === LK_UUID_NOTIFY_CHAR) {
-                  const result = this.decoder.frameBuffer(data);
-                  if (result) {
-                    wdEvent.emit("EUCData", result);
-                    /*
-                    logger.log(
-                      `engoMac : ${this.engoMAC}, engoCmms : ${this.engoCmms}`
-                    );*/
-                    if (
-                      this.engoMAC &&
-                      ble.write[this.engoMAC] &&
-                      this.engoCmms
-                    ) {
-                      //engoData def
-                      const engoSpd = this.engoCmms.writeTextDefault(
-                        "speed : " + result["speed"],
-                        230,
-                        210
-                      );
-                      const engoPWM = this.engoCmms.writeTextDefault(
-                        "PWM : " + result["hPWM"],
-                        230,
-                        150
-                      );
-                      const engoVlt = this.engoCmms.writeTextDefault(
-                        "Voltage : " + result["voltage"],
-                        230,
-                        90
-                      );
-                      const engoCLS = this.engoCmms.getClearScreenCmd();
-                      // logger.log("sending ENGO data");
-                      const engoData = new Uint8Array([
-                        ...engoCLS,
-                        ...engoSpd,
-                        ...engoPWM,
-                        ...engoVlt,
-                      ]).buffer;
+                switch (uuid) {
+                  case LK_UUID_NOTIFY_CHAR:
+                    const result = this.decoder.frameBuffer(data);
+                    if (result) {
+                      wdEvent.emit("EUCData", result);
+                      /*
+                      logger.log(
+                        `engoMac : ${this.engoMAC}, engoComm : ${this.engoComm}`
+                      );*/
+                      if (
+                        this.engoMAC &&
+                        ble.write[this.engoMAC] &&
+                        this.engoComm
+                      ) {
+                        //engoData def
+                        const engoSpd = this.engoComm.writeTextDefault(
+                          "speed : " + result["speed"],
+                          230,
+                          210
+                        );
+                        const engoPWM = this.engoComm.writeTextDefault(
+                          "PWM : " + result["hPWM"],
+                          230,
+                          150
+                        );
+                        const engoVlt = this.engoComm.writeTextDefault(
+                          "Voltage : " + result["voltage"],
+                          230,
+                          90
+                        );
+                        const engoCLS = this.engoComm.getClearScreenCmd();
+                        // logger.log("sending ENGO data");
+                        const engoData = new Uint8Array([
+                          ...engoCLS,
+                          ...engoSpd,
+                          ...engoPWM,
+                          ...engoVlt,
+                        ]).buffer;
 
-                      ble.write[this.engoMAC].characteristic(
-                        ENGO_UUID_RX_CHAR,
-                        engoData,
-                        (write_without_response = true)
+                        ble.write[this.engoMAC].characteristic(
+                          ENGO_UUID_RX_CHAR,
+                          engoData,
+                          (write_without_response = true)
+                        );
+                      }
+                    }
+                    break;
+                  case VARIA_UUID_NOTIFY_CHAR:
+                    const variaData = new Uint8Array(data);
+                    const vehspd = variaData[3] || "--";
+                    const vehdst = variaData[2] || "--";
+                    wdEvent.emit("variaData", { vehdst, vehspd });
+                    break;
+                  case ENGO_UUID_RX_CHAR:
+                    // 1. Process RX data
+                    const rxData = new Uint8Array(data);
+                    // 2. Prepare TX data (replace with your logic)
+                    const txData = processEngoRxAndPrepareTx(rxData);
+                    if (txData && ble.write[mac]) {
+                      // 3. Write to TX characteristic
+                      ble.write[mac].characteristic(
+                        "0783b03e-8535-b5a0-7140-a304d2495cb8", // ENGO TX char UUID
+                        txData,
+                        true // write without response
                       );
                     }
-                  }
-                } else if (uuid === VARIA_UUID_NOTIFY_CHAR) {
-                  const variaData = new Uint8Array(data);
-                  const vehspd = variaData[3] || "--";
-                  const vehdst = variaData[2] || "--";
-                  wdEvent.emit("variaData", { vehdst, vehspd });
+                    break;
+                  case ENGO_UUID_GEST_CHAR:
+                    wdEvent.emit("engoGst", data);
+                    break;
                 }
               });
             } else {
@@ -256,8 +278,8 @@ class BLE {
     const connCallback = () => {
       const type = this.getDeviceType(name);
       switch (type) {
-        case "VARIA":
-          this.connections[mac].type = "VARIA";
+        case "Varia Radar":
+          this.connections[mac].type = "Varia Radar";
           this.communicateDeviceStatus();
           this.listen(mac, varia_services, () => {
             this.enableCharNotif(mac, () => {
@@ -266,10 +288,10 @@ class BLE {
             });
           });
           break;
-        case "ENGO":
+        case "Engo Smartglasses":
           this.engoMAC = mac;
-          this.engoCmms = new EngoComms();
-          this.connections[mac].type = "ENGO";
+          this.engoComm = new EngoComm();
+          this.connections[mac].type = "Engo Smartglasses";
           this.communicateDeviceStatus();
           this.listen(mac, engo_services, () => {
             this.enableCharNotif(mac, () => {
@@ -315,9 +337,9 @@ class BLE {
       if (connect_result.status === "disconnected") {
         logger.log(`Device ${mac} disconnected.`);
         // get mac from bluebooth backend to get the proper device (dirty fix, should do a better implementation)
+
         mac = connect_result.mac;
         name = this.connections[mac]?.name;
-
         logger.log(`Device ${mac}, ${name} disconnected.`);
 
         // need to get the pid and destroy the connection
@@ -330,10 +352,6 @@ class BLE {
         logger.log(
           "device connection status :",
           this.connections[mac].connected
-        );
-        wdEvent.emit(
-          "bleLog",
-          "device connection status :" + this.connections[mac].connected
         );
         setTimeout(
           () => this.connect(mac, name, this.connections[mac].callback),
@@ -395,6 +413,10 @@ class BLE {
         logger.log(`Listener started for ${mac}`);
         callback(); // Proceed to the next device in the queue
       } else {
+        logger.log(
+          `Failed to start listener for ${mac} (attempt ${attempt}):`,
+          response.message
+        );
         if (attempt < max_attempts) {
           setTimeout(() => {
             this.listen(
@@ -414,12 +436,28 @@ class BLE {
     });
   }
   communicateDeviceStatus() {
-    logger.log("communicateDeviceStatus called");
     const BLEConnections = Object.keys(this.connections).map((mac) => {
       const { name, connected, type, ready } = this.connections[mac];
       return { mac, name, connected, type, ready };
     });
-    logger.log("Emitting BLEConnections:", BLEConnections);
     wdEvent.emit("BLEConnections", BLEConnections);
   }
+}
+
+// Helper function to process RX and prepare TX data
+function processEngoRxAndPrepareTx(rxData) {
+  const dataBuffer = new Uint8Array(rxData);
+  const cmdType = dataBuffer[1];
+  switch (cmdType) {
+    case 0x06: // firmware
+      // check that config exists:
+      return new Uint8Array(this.engoComm.getConfigsCmd()).buffer;
+    case 0xd3: // config list
+      if (this.engoComm.checkConfigExists(dataBuffer)) {
+        return new Uint8Array(this.engoComm.setConfigCmd()).buffer;
+        this.engoComm.engoReady = true;
+      }
+  }
+  //TBC
+  return null; // Replace with your logic
 }

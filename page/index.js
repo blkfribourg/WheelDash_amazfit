@@ -70,7 +70,7 @@ let globalDeviceList = [];
 let currentView = "main"; // "main" or "connectMenu"
 let mainWidgets = [];
 let connectMenuWidgets = [];
-
+let EUCConnected = false;
 onKey({
   callback: (key, keyEvent) => {
     if (key === 36 && keyEvent === 1) {
@@ -136,13 +136,17 @@ wdEvent.on("bleLog", (msg) => {
   console.log("[BLE SERVICE]", msg);
 });
 wdEvent.on("BLEConnections", (deviceList) => {
+  console.log("BLEConnections event received");
   globalDeviceList = deviceList;
-  if (AppContext.MainUI && AppContext.MainUI.isEUCConnected && deviceList) {
-    const isConnected = deviceList.some(
-      (device) => device.type === "EUC" && device.connected && device.ready
-    );
-    AppContext.MainUI.isEUCConnected(isConnected);
+
+  EUCConnected = deviceList.some(
+    (device) => device.type === "EUC" && device.connected && device.ready
+  );
+  if (AppContext.MainUI) {
+    console.log("updating colors event handler", EUCConnected);
+    AppContext.MainUI.isEUCConnected(EUCConnected);
   }
+
   if (AppContext.DeviceMenuUI && AppContext.DeviceMenuUI.isActive) {
     AppContext.DeviceMenuUI.updateConnectButton(deviceList);
     AppContext.DeviceMenuUI.buildConnectMenu(deviceList);
@@ -194,6 +198,8 @@ function showMainUI() {
   currentView = "main";
   const ui = new UI();
   ui.init();
+  console.log("updating colors init", EUCConnected);
+  ui.isEUCConnected(EUCConnected);
   AppContext.MainUI = ui;
 }
 function clearMainUI() {
@@ -231,6 +237,12 @@ function clearConnectMenuUI() {
 // --- Main UI Class ---
 class UI {
   init() {
+    this.isActive = false;
+    this.txtColor = 0x999999;
+    this.PWMColor = 0x999999;
+    this.tempColor = 0x999999;
+    this.batColor = 0x999999;
+
     mainWidgets.push(
       createWidget(widget.TEXT, {
         x: 180,
@@ -254,7 +266,7 @@ class UI {
         w: 150,
         h: 150,
         text: "--",
-        color: 0x999999,
+        color: this.txtColor,
         text_size: 130,
         align_h: align.CENTER_H,
       }))
@@ -266,7 +278,7 @@ class UI {
         w: 80,
         h: 50,
         text: "--%",
-        color: 0x999999,
+        color: this.txtColor,
         text_size: 30,
         align_h: align.LEFT,
       }))
@@ -278,7 +290,7 @@ class UI {
         w: 80,
         h: 50,
         text: "--°C",
-        color: 0x999999,
+        color: this.txtColor,
         text_size: 30,
         align_h: align.RIGHT,
       }))
@@ -303,7 +315,7 @@ class UI {
         w: 410,
         h: 410,
         radius: 0,
-        color: 0x999999,
+        color: this.PWMColor,
         start_angle: 150,
         end_angle: 150,
         line_width: 25,
@@ -329,7 +341,7 @@ class UI {
         w: 340,
         h: 340,
         radius: 0,
-        color: 0x999999,
+        color: this.batColor,
         start_angle: 150,
         end_angle: 150,
         line_width: 25,
@@ -355,7 +367,7 @@ class UI {
         w: 340,
         h: 340,
         radius: 0,
-        color: 0x999999,
+        color: this.tempColor,
         start_angle: 390,
         end_angle: 390,
         line_width: 25,
@@ -369,12 +381,14 @@ class UI {
     return arc.start_angle + range * ratio;
   }
   isEUCConnected(isPaired) {
-    const color = isPaired ? 0xffffff : 0x999999;
-    this.spd.color = color;
-    this.PWMArc.color = isPaired ? 0x3366cc : 0x999999;
+    this.spd.color = isPaired ? 0xffffff : 0x999999;
+    this.tempVal.color = isPaired ? 0xffffff : 0x999999;
+    this.batVal.color = isPaired ? 0xffffff : 0x999999;
+    this.PWMArc.color = isPaired ? 0x58ba1a : 0x999999;
     this.tempArc.color = isPaired ? 0x58ba1a : 0x999999;
     this.batArc.color = isPaired ? 0x58ba1a : 0x999999;
   }
+
   updateUI(hPWM, speed, temperature, battery) {
     try {
       this.spd.text = speed != null ? Math.round(speed).toString() : "--";
