@@ -2,14 +2,14 @@ import { stringToBuffer } from "@zos/utils";
 const { wdEvent } = getApp()._options.globalData;
 import CurrentTime from "./CurrentTime";
 export default class EngoComm {
-  init() {
+  constructor() {
     this.engoPage = 1;
     this.lastPageIndex = 3;
     this.fw_version = null;
     this.engoConfigName = null; // name of the config to load
     this.battery = null;
     this.luma = null;
-    this.configs = [];
+    this.cfgList = [];
     this.speedUnit = "km/h";
     this.temperatureUnit = "C";
     this.variaTargetSpd = 0;
@@ -59,54 +59,40 @@ export default class EngoComm {
     });
   }
   checkConfigExists(dataBuffer) {
-    console.log("checkConfigExists called", dataBuffer);
     let configName = "whldsh_app";
     if (this.useMiles === true) {
       configName = "whldsh_appm";
     }
+    const configName_hex = this.getHexText(configName, 0, 0);
+    this.cfgList.push(...dataBuffer);
 
-    const cfgList = [...dataBuffer];
-
-    if (cfgList[1] === 0xd3 && cfgList[cfgList.length - 1] === 0xaa) {
+    if (
+      this.cfgList[1] === 0xd3 &&
+      this.cfgList[this.cfgList.length - 1] === 0xaa
+    ) {
       let tempName = [];
-
-      for (let i = 4; i < cfgList.length; i++) {
-        if (cfgList[i] === 0x00) {
-          const decodedName = String.fromCharCode(...tempName);
-
-          if (decodedName === configName) {
-            console.log("config found!");
+      let names = [];
+      for (let i = 4; i < this.cfgList.length; i++) {
+        if (this.cfgList[i] === 0x00) {
+          // Use Array.prototype.every for value equality
+          if (
+            tempName.length === configName_hex.length &&
+            tempName.every((v, idx) => v === configName_hex[idx])
+          ) {
             this.engoConfigName = configName;
+            console.log("Config name found: " + configName);
             return true;
           } else {
-            i += 11; // Saut manuel (offset)
+            names.push(...tempName);
+            tempName = [];
+            i += 11; // Manual offset
           }
-          /*
-              // Extraction de la version depuis cfgList
-              const cfgEngoVer = cfgList.slice(i + 5, i + 9);
-    
-              // Exemple : récupération de la version attendue depuis JSON
-              const jsonCfg = getJson("EngoCfg4");
-              const lastRelevant = jsonCfg[jsonCfg.length - 2];
-              const cfgVer = arrayToRawCmd(lastRelevant).slice(15, 19);
-    
-              // Comparaison des versions
-              if (arraysEqual(cfgEngoVer, cfgVer)) {
-                console.log("version is up to date");
-                engoCfgOK = true;
-              }
-            }*/
-
-          return false;
+        } else {
+          tempName.push(this.cfgList[i]);
         }
       }
     }
-
-    // Fonction utilitaire pour comparer deux tableaux
-    function arraysEqual(a, b) {
-      if (a.length !== b.length) return false;
-      return a.every((val, i) => val === b[i]);
-    }
+    return false;
   }
   cyclePages() {
     this.engoPage = this.engoPage + 1;

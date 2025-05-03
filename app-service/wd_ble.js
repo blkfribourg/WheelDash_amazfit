@@ -37,9 +37,10 @@ const engo_services = {
 
   "0783b03e-8535-b5a0-7140-a304d2495cb7": {
     // service UUID
-    "0783b03e-8535-b5a0-7140-a304d2495cbb": ["2902"], //  Proximity sensor NOTIFY chara UUID
+
     "0783b03e-8535-b5a0-7140-a304d2495cb8": ["2902"], // TX NOTIFY chara UUID
     "0783b03e-8535-b5a0-7140-a304d2495cba": [], // RX NOTIFY chara UUID
+    "0783b03e-8535-b5a0-7140-a304d2495cbb": ["2902"], //  Proximity sensor NOTIFY chara UUID
     //  ^--- descriptor UUID
   },
   // ... add other services here if needed
@@ -167,8 +168,15 @@ class BLE {
               logger.log(
                 `Notifications enabled for ${mac}, characteristic: ${chara}`
               );
-
-              callback();
+              if (chara === ENGO_UUID_TX_CHAR) {
+                logger.log("sending fw req cmd");
+                //Send getFirmware command to initialize the ENGO communications process
+                ble.write[mac].characteristic(
+                  ENGO_UUID_RX_CHAR, // ENGO RX char UUID
+                  new Uint8Array(this.engoComm.getFwCmd()).buffer,
+                  true // write without response
+                );
+              }
               //this.connections[mac].ready = true; // Set the "ready" status
               ble.on[mac].charaNotification((uuid, data, length) => {
                 /*
@@ -230,24 +238,29 @@ class BLE {
                     const vehdst = variaData[2] || "--";
                     wdEvent.emit("variaData", { vehdst, vehspd });
                     break;
-                  case ENGO_UUID_RX_CHAR:
-                    // 1. Process RX data
-                    const rxData = new Uint8Array(data);
-                    // 2. Prepare TX data (replace with your logic)
-                    const txData = processEngoRxAndPrepareTx(rxData);
+                  case ENGO_UUID_TX_CHAR:
+                    // 1. Process TX data
+                    const txData = new Uint8Array(data);
+                    // 2. Prepare RX data (replace with your logic)
+                    const rxData = this.processEngoTxAndPrepareRx(txData);
                     if (txData && ble.write[mac]) {
                       // 3. Write to TX characteristic
-                      ble.write[mac].characteristic(
-                        "0783b03e-8535-b5a0-7140-a304d2495cb8", // ENGO TX char UUID
-                        txData,
-                        true // write without response
-                      );
+                      //  logger.log("rxData: " + JSON.stringify(rxData));
+                      if (rxData) {
+                        ble.write[mac].characteristic(
+                          ENGO_UUID_RX_CHAR, // ENGO RX char UUID
+                          rxData,
+                          (write_without_response = true) // write without response
+                        );
+                      }
                     }
                     break;
                   case ENGO_UUID_GEST_CHAR:
                     wdEvent.emit("engoGst", data);
                     break;
                 }
+
+                callback();
               });
             } else {
               logger.log(
@@ -442,22 +455,33 @@ class BLE {
     });
     wdEvent.emit("BLEConnections", BLEConnections);
   }
-}
+  // Helper function to process TX and prepare RX data
+  processEngoTxAndPrepareRx(txData) {
+    // logger.log("processEngoTxAndPrepareRx called", txData);
+    const dataBuffer = new Uint8Array(txData);
 
-// Helper function to process RX and prepare TX data
-function processEngoRxAndPrepareTx(rxData) {
-  const dataBuffer = new Uint8Array(rxData);
-  const cmdType = dataBuffer[1];
-  switch (cmdType) {
-    case 0x06: // firmware
-      // check that config exists:
-      return new Uint8Array(this.engoComm.getConfigsCmd()).buffer;
-    case 0xd3: // config list
-      if (this.engoComm.checkConfigExists(dataBuffer)) {
-        return new Uint8Array(this.engoComm.setConfigCmd()).buffer;
-        this.engoComm.engoReady = true;
+    if (dataBuffer[0] === 0xff) {
+      const cmdType = dataBuffer[1];
+      console.log("cmdType", cmdType);
+      switch (cmdType) {
+        case 0x06: // firmware
+          // check that config exists:
+          return new Uint8Array(this.engoComm.getConfigsCmd()).buffer;
+        case 0xd3: // config list
+          if (this.engoComm.checkConfigExists(dataBuffer)) {
+            this.engoComm.engoReady = true;
+            return new Uint8Array(this.engoComm.setConfigCmd()).buffer;
+          }
       }
+      //TBC
+      return null; // Replace with your logic
+    } else {
+      if (!this.engoComm.engoReady) {
+        if (this.engoComm.checkConfigExists(dataBuffer)) {
+          this.engoComm.engoReady = true;
+          return new Uint8Array(this.engoComm.setConfigCmd()).buffer;
+        }
+      }
+    }
   }
-  //TBC
-  return null; // Replace with your logic
 }
