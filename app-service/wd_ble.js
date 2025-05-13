@@ -2,6 +2,7 @@ import { log } from "@zos/utils";
 import BLEMaster from "@silver-zepp/easy-ble";
 import LKDecoder from "../utils/LKDecoder";
 import EngoComm from "../utils/EngoComm";
+import VariaPacketParser from "../utils/VariaParser";
 
 const { wdEvent } = getApp()._options.globalData;
 
@@ -12,12 +13,12 @@ const VARIA_UUID_NOTIFY_CHAR = "6a4e3203-667b-11e3-949a-0800200c9a66";
 const ENGO_UUID_RX_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cba";
 const ENGO_UUID_TX_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cb8";
 const ENGO_UUID_GEST_CHAR = "0783b03e-8535-b5a0-7140-a304d2495cbb"; // TX characteristic UUID for ENGO
-
+const ENGO_UUID_BAT_CHAR = "00002A19-0000-1000-8000-00805F9B34FB";
 const lk_services = {
   // service #1
   "0000ffe0-0000-1000-8000-00805f9b34fb": {
     // service UUID
-    "0000ffe1-0000-1000-8000-00805f9b34fb": ["2902"], // NOTIFY chara UUID
+    [LK_UUID_NOTIFY_CHAR]: ["2902"], // NOTIFY chara UUID
     //  ^--- descriptor UUID
   },
   // ... add other services here if needed
@@ -27,7 +28,7 @@ const varia_services = {
   // service #1
   "6a4e3200-667b-11e3-949a-0800200c9a66": {
     // service UUID
-    "6a4e3203-667b-11e3-949a-0800200c9a66": ["2902"], // NOTIFY chara UUID
+    [VARIA_UUID_NOTIFY_CHAR]: ["2902"], // NOTIFY chara UUID
     //  ^--- descriptor UUID
   },
   // ... add other services here if needed
@@ -37,12 +38,12 @@ const engo_services = {
 
   "0783b03e-8535-b5a0-7140-a304d2495cb7": {
     // service UUID
-
-    "0783b03e-8535-b5a0-7140-a304d2495cb8": ["2902"], // TX NOTIFY chara UUID
-    "0783b03e-8535-b5a0-7140-a304d2495cba": [], // RX NOTIFY chara UUID
-    "0783b03e-8535-b5a0-7140-a304d2495cbb": ["2902"], //  Proximity sensor NOTIFY chara UUID
+    [ENGO_UUID_TX_CHAR]: ["2902"], // TX NOTIFY chara UUID
+    [ENGO_UUID_RX_CHAR]: [], // RX NOTIFY chara UUID
+    [ENGO_UUID_GEST_CHAR]: ["2902"], //  Proximity sensor NOTIFY chara UUID
     //  ^--- descriptor UUID
   },
+
   // ... add other services here if needed
 };
 
@@ -99,10 +100,13 @@ class BLE {
     this.devices = {};
     this.decoder = null; // Initialize decoder to null
     this.engoComm = null; // Initialize engoComm to null
+    this.variaParser = null; // Initialize variaParser to null
     this.connections = {}; // mac → { name, connected, decoder, notifChar}
     this.deviceQueue = []; // Queue of devices to connect to
     this.isConnecting = false; // Flag to track ongoing connections
     this.engoMAC = null;
+    this.EUCReady = false;
+    this.variaReady = false;
 
     //this.scan();
   }
@@ -128,6 +132,14 @@ class BLE {
               type: this.getDeviceType(name),
             });
           }
+        });
+        // Sort devices by desired order
+        const typeOrder = ["EUC", "Varia Radar", "Engo Smartglasses"];
+        this._scanDeviceQueue.sort((a, b) => {
+          const aIdx = typeOrder.indexOf(a.type);
+          const bIdx = typeOrder.indexOf(b.type);
+          // Devices not in the list get a high index (sorted last)
+          return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx);
         });
         // Emit scan result to pages
         wdEvent.emit("scanResult", this._scanDeviceQueue);
@@ -158,9 +170,6 @@ class BLE {
       for (const char_uuid in characteristics) {
         const descriptors = characteristics[char_uuid];
         if (descriptors.includes("2902")) {
-          logger.log(
-            `Enabling notifications for ${mac}, characteristic: ${char_uuid}`
-          );
           ble.write[mac].enableCharaNotifications(char_uuid, true);
 
           ble.on[mac].descWriteComplete((chara, desc, status) => {
@@ -174,8 +183,14 @@ class BLE {
                 ble.write[mac].characteristic(
                   ENGO_UUID_RX_CHAR, // ENGO RX char UUID
                   new Uint8Array(this.engoComm.getFwCmd()).buffer,
-                  true // write without response
+                  (write_without_response = true)
                 );
+              }
+              if (chara === VARIA_UUID_NOTIFY_CHAR) {
+                this.variaReady = true;
+              }
+              if (chara === LK_UUID_NOTIFY_CHAR) {
+                this.EUCReady = true;
               }
               //this.connections[mac].ready = true; // Set the "ready" status
               ble.on[mac].charaNotification((uuid, data, length) => {
@@ -197,46 +212,28 @@ class BLE {
                       if (
                         this.engoMAC &&
                         ble.write[this.engoMAC] &&
-                        this.engoComm
+                        this.engoComm &&
+                        this.engoComm.engoReady
                       ) {
-                        //engoData def
-                        const engoSpd = this.engoComm.writeTextDefault(
-                          "speed : " + result["speed"],
-                          230,
-                          210
-                        );
-                        const engoPWM = this.engoComm.writeTextDefault(
-                          "PWM : " + result["hPWM"],
-                          230,
-                          150
-                        );
-                        const engoVlt = this.engoComm.writeTextDefault(
-                          "Voltage : " + result["voltage"],
-                          230,
-                          90
-                        );
-                        const engoCLS = this.engoComm.getClearScreenCmd();
-                        // logger.log("sending ENGO data");
-                        const engoData = new Uint8Array([
-                          ...engoCLS,
-                          ...engoSpd,
-                          ...engoPWM,
-                          ...engoVlt,
-                        ]).buffer;
+                        const pageCmd = new Uint8Array(
+                          this.engoComm.engoDisplayEUCData(result)
+                        ).buffer;
 
-                        ble.write[this.engoMAC].characteristic(
-                          ENGO_UUID_RX_CHAR,
-                          engoData,
-                          (write_without_response = true)
-                        );
+                        if (pageCmd.byteLength > 0) {
+                          ble.write[this.engoMAC].characteristic(
+                            ENGO_UUID_RX_CHAR,
+                            pageCmd,
+                            (write_without_response = true)
+                          );
+                        }
                       }
                     }
                     break;
                   case VARIA_UUID_NOTIFY_CHAR:
                     const variaData = new Uint8Array(data);
-                    const vehspd = variaData[3] || "--";
-                    const vehdst = variaData[2] || "--";
-                    wdEvent.emit("variaData", { vehdst, vehspd });
+                    const variaTarget = this.variaParser.push(variaData);
+                    //console.log(JSON.stringify(variaTarget));
+                    wdEvent.emit("variaTarget", variaTarget);
                     break;
                   case ENGO_UUID_TX_CHAR:
                     // 1. Process TX data
@@ -255,18 +252,27 @@ class BLE {
                       }
                     }
                     break;
+
                   case ENGO_UUID_GEST_CHAR:
                     wdEvent.emit("engoGst", data);
+                    const pageCmd = new Uint8Array(
+                      this.engoComm.getClearScreenCmd()
+                    ).buffer;
+                    ble.write[this.engoMAC].characteristic(
+                      ENGO_UUID_RX_CHAR,
+                      pageCmd,
+                      (write_without_response = true)
+                    );
                     break;
                 }
-
-                callback();
               });
             } else {
+              // TODO, retry subscribing notifications
               logger.log(
                 `Failed to enable notifications for ${mac}, characteristic: ${chara}`
               );
             }
+            callback();
           });
         }
       }
@@ -292,12 +298,20 @@ class BLE {
       const type = this.getDeviceType(name);
       switch (type) {
         case "Varia Radar":
+          this.variaParser = new VariaPacketParser();
           this.connections[mac].type = "Varia Radar";
           this.communicateDeviceStatus();
           this.listen(mac, varia_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true;
-              this.processQueue();
+              const waitForVariaReady = () => {
+                if (this.variaReady) {
+                  this.connections[mac].ready = true;
+                  this.processQueue();
+                } else {
+                  setTimeout(waitForVariaReady, 200); // check every 200ms
+                }
+              };
+              waitForVariaReady();
             });
           });
           break;
@@ -308,8 +322,16 @@ class BLE {
           this.communicateDeviceStatus();
           this.listen(mac, engo_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true;
-              this.processQueue();
+              // Wait until engoComm.engoReady is true before proceeding
+              const waitForEngoReady = () => {
+                if (this.engoComm && this.engoComm.engoReady) {
+                  this.connections[mac].ready = true;
+                  this.processQueue();
+                } else {
+                  setTimeout(waitForEngoReady, 200); // check every 200ms
+                }
+              };
+              waitForEngoReady();
             });
           });
           break;
@@ -320,8 +342,15 @@ class BLE {
           logger.log("EUC flag set for", mac);
           this.listen(mac, lk_services, () => {
             this.enableCharNotif(mac, () => {
-              this.connections[mac].ready = true;
-              this.processQueue();
+              const waitForEUCReady = () => {
+                if (this.EUCReady) {
+                  this.connections[mac].ready = true;
+                  this.processQueue();
+                } else {
+                  setTimeout(waitForEUCReady, 200); // check every 200ms
+                }
+              };
+              waitForEUCReady();
             });
           });
           break;
@@ -415,11 +444,14 @@ class BLE {
 
   listen(mac, services, callback, attempt = 1, max_attempts = 5, delay = 1000) {
     const profile_object = ble.generateProfileObject(services, mac);
+
     this.connections[mac].services = services; // Store services for later use in enableCharNotif
+    /*
     const service_uuid = Object.keys(services)[0];
     const notifChar = Object.keys(services[service_uuid])[0]; // note notifChar is the 1st char uuid!!
     logger.log("Setting up listener for ", mac, notifChar);
     this.connections[mac].notifChar = notifChar;
+    */
 
     ble.startListener(profile_object, mac, (response) => {
       if (response.success) {
@@ -462,11 +494,16 @@ class BLE {
 
     if (dataBuffer[0] === 0xff) {
       const cmdType = dataBuffer[1];
-      console.log("cmdType", cmdType);
+
       switch (cmdType) {
         case 0x06: // firmware
-          // check that config exists:
+          // get battery
           return new Uint8Array(this.engoComm.getConfigsCmd()).buffer;
+        case 0x05: // battery
+          this.engoComm.battery = dataBuffer[4]; // NOTE : ONLY GETTING BAT ONCE HERE, SHOULD WRITE A FCT TO GET IT EVERY MINUTE
+          // check that config exists:
+          return null;
+
         case 0xd3: // config list
           if (this.engoComm.checkConfigExists(dataBuffer)) {
             this.engoComm.engoReady = true;

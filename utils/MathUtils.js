@@ -1,10 +1,7 @@
-function formatNumber(value, decimals = 2, locale = "en-US") {
-  if (value === null || value === undefined) {
+export function formatNumber(value, decimals = 2) {
+  if (value === null || value === undefined || isNaN(value)) {
     return "--";
   }
 
-  return new Intl.NumberFormat(locale, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  return (fixed = Number(value).toFixed(decimals));
 }

@@ -11,4 +11,7 @@ export default class CurrentTime {
 
     return currentTime;
   }
+  getUTCTimeStamp() {
+    return this.time.getTime();
+  }
 }

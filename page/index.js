@@ -27,6 +27,8 @@ import {
 } from "@zos/interaction";
 
 import { setPageBrightTime, setScreenOff } from "@zos/display";
+import EngoComm from "../utils/EngoComm";
+
 //Reimplement screen wake up, trying to avoid app exiting on screen off:
 /*
 onWristMotion({
@@ -131,19 +133,15 @@ function exitService() {
   appService.exit();
 }
 
-// --- Event Handlers (top-level) ---
-wdEvent.on("bleLog", (msg) => {
-  console.log("[BLE SERVICE]", msg);
-});
 wdEvent.on("BLEConnections", (deviceList) => {
-  console.log("BLEConnections event received");
+  // console.log("BLEConnections event received");
   globalDeviceList = deviceList;
 
   EUCConnected = deviceList.some(
     (device) => device.type === "EUC" && device.connected && device.ready
   );
   if (AppContext.MainUI) {
-    console.log("updating colors event handler", EUCConnected);
+    //  console.log("updating colors event handler", EUCConnected);
     AppContext.MainUI.isEUCConnected(EUCConnected);
   }
 
@@ -198,7 +196,7 @@ function showMainUI() {
   currentView = "main";
   const ui = new UI();
   ui.init();
-  console.log("updating colors init", EUCConnected);
+  // console.log("updating colors init", EUCConnected);
   ui.isEUCConnected(EUCConnected);
   AppContext.MainUI = ui;
 }
@@ -490,6 +488,9 @@ class ConnectionManagerUI {
       (_, i) => checkedStatuses[i]
     );
     wdEvent.emit("deviceQueue", checkedDevices);
+    setPageBrightTime({
+      brightTime: 20000, // screen on for 20 seconds
+    });
   }
   buildConnectMenu(deviceList) {
     deviceList.forEach((device, i) => {

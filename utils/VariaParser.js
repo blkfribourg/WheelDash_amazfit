@@ -1,4 +1,4 @@
-class VariaPacketParser {
+export default class VariaPacketParser {
   constructor() {
     this.partial = null; // Temporary storage if an incomplete packet is received
   }
@@ -31,7 +31,7 @@ class VariaPacketParser {
     } else {
       // Store incomplete data for the next packet
       this.partial = data;
-      return [];
+      return null;
     }
   }
 

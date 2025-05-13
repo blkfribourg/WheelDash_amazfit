@@ -1,13 +1,21 @@
 import { stringToBuffer } from "@zos/utils";
 const { wdEvent } = getApp()._options.globalData;
 import CurrentTime from "./CurrentTime";
+import { formatNumber } from "./MathUtils";
+
 export default class EngoComm {
   constructor() {
     this.engoPage = 1;
-    this.lastPageIndex = 3;
+    this.engoPage_current = -1;
+    this.engoVariaAlert = false;
+    this.lastPageIndex = 2;
+    this.refreshEvery = 1000;
+    this.batRefreshEvery = 60000;
     this.fw_version = null;
     this.engoConfigName = null; // name of the config to load
     this.battery = null;
+    this.lastBatReqTS = -1;
+    this.lastReqTS = -1;
     this.luma = null;
     this.cfgList = [];
     this.speedUnit = "km/h";
@@ -48,13 +56,15 @@ export default class EngoComm {
       this.cyclePages();
       //cycle engo pages
     });
-    wdEvent.on("variaData", (data) => {
-      this.variaTargetNb = data.length;
-      this.variaTargetSpd = data[0].speed;
-      this.variaTargetDst = data[0].distance;
-    });
-    wdEvent.on("EUCData", (data) => {
-      if (this.engoReady) {
+    wdEvent.on("variaTarget", (data) => {
+      if (data.length > 0) {
+        this.variaTargetNb = data.length;
+        this.variaTargetSpd = data[0].speed;
+        this.variaTargetDst = data[0].distance;
+      } else {
+        this.variaTargetNb = 0;
+        this.variaTargetSpd = 0;
+        this.variaTargetDst = 0;
       }
     });
   }
@@ -99,8 +109,9 @@ export default class EngoComm {
     if (this.engoPage > this.lastPageIndex) this.engoPage = 1;
   }
   getHexText(text, lpadding, rpadding) {
-    let hexText = this.utf8Encode(text);
-    const textLength = text.length;
+    const text_str = String(text);
+    let hexText = this.utf8Encode(text_str);
+    const textLength = text_str.length;
 
     if (lpadding > 0) {
       const leftPadding = new Array(lpadding - textLength).fill(0x24);
@@ -179,6 +190,9 @@ export default class EngoComm {
   getFwCmd() {
     return [0xff, 0x06, 0x00, 0x05, 0xaa];
   }
+  getBatteryCmd() {
+    return [0xff, 0x05, 0x00, 0x05, 0xaa];
+  }
 
   getEnableGestureCmd() {
     return [0xff, 0x21, 0x00, 0x06, 0x01, 0xaa];
@@ -200,13 +214,13 @@ export default class EngoComm {
   }
 
   getClearRectCmd(x0, y0, x1, y1, int) {
-    const cmd = [0xff, 0x30, 0x00, 6, int];
+    const cmd = [0xff, 0x30, 0x00, 0x06, int];
     cmd.push(0xaa);
     cmd.push(...[0xff, 0x34, 0x00, 13]);
-    cmd.push(...encodeint16(x0));
-    cmd.push(...encodeint16(y0));
-    cmd.push(...encodeint16(x1));
-    cmd.push(...encodeint16(y1));
+    cmd.push(...this.encodeInt16(x0));
+    cmd.push(...this.encodeInt16(y0));
+    cmd.push(...this.encodeInt16(x1));
+    cmd.push(...this.encodeInt16(y1));
     cmd.push(0xaa);
     return cmd;
   }
@@ -214,43 +228,85 @@ export default class EngoComm {
   // on received engoRx:
   engoDisplayEUCData(EUCDataResult) {
     if (EUCDataResult) {
+      let prefixCmd = []; // to send clear screen command before the getPageCmd
       const textArray = [];
-      textArray.push(this.getHexText(new CurrentTime().getCurrentTime(), 0, 1));
+      const time = new CurrentTime();
+      const currentUTC = time.getUTCTimeStamp();
+
+      if (this.battery > 0) {
+        textArray.push(this.getHexText(this.battery + "%", 0, 1));
+      } else {
+        textArray.push(this.getHexText("", 0, 1));
+      }
+
+      textArray.push(this.getHexText(time.getCurrentTime(), 0, 1));
+
       switch (this.engoPage) {
         case 1:
-          textArray.push(
-            this.getHexText(
-              formatNumber(Math.abs(EUCDataResult.hPWM), 1) + " %",
-              0,
-              3
-            )
-          );
-          textArray.push(
-            this.getHexText(
-              formatNumber(EUCDataResult.speed, 1) + " " + this.speedUnit,
-              0,
-              3
-            )
-          );
-          textArray.push(
-            this.getHexText(
-              formatNumber(EUCDataResult.temperature, 1) +
-                " *" +
-                this.temperatureUnit,
-              0,
-              3
-            )
-          );
-          textArray.push(
-            this.getHexText(formatNumber(EUCDataResult.battery, 1) + " %", 0, 3)
-          );
-          const payload = this.pagePayload(textArray);
-          return this.getPageCmd(payload, this.engoPage);
+          if (
+            this.lastReqTS < 0 ||
+            currentUTC - this.lastReqTS > this.refreshEvery
+          ) {
+            this.lastReqTS = currentUTC;
+            if (this.engoPage_current !== this.engoPage) {
+              prefixCmd = this.getClearScreenCmd();
+              this.engoPage_current = this.engoPage;
+            }
+            if (
+              this.lastBatReqTS < 0 ||
+              currentUTC - this.lastBatReqTS > this.batRefreshEvery
+            ) {
+              // send battery command every minute
+              prefixCmd.push(...this.getBatteryCmd());
+              this.lastBatReqTS = currentUTC;
+            }
+            textArray.push(
+              this.getHexText(
+                formatNumber(Math.abs(EUCDataResult.hPWM), 1) + " %",
+                0,
+                3
+              )
+            );
+            textArray.push(
+              this.getHexText(
+                formatNumber(EUCDataResult.speed, 1) + " " + this.speedUnit,
+                0,
+                3
+              )
+            );
+            textArray.push(
+              this.getHexText(
+                formatNumber(EUCDataResult.temperature, 1) +
+                  " *" +
+                  this.temperatureUnit,
+                0,
+                3
+              )
+            );
+            textArray.push(
+              this.getHexText(
+                formatNumber(EUCDataResult.battery, 1) + " %",
+                0,
+                3
+              )
+            );
+            const payload = this.pagePayload(textArray);
+            prefixCmd.push(...this.checkVaria());
+            return [...prefixCmd, ...this.getPageCmd(payload, this.engoPage)];
+          } else {
+            prefixCmd.push(...this.checkVaria());
+            return [...prefixCmd];
+          }
 
         // execute case 3:
 
         case 2: // ici faire la high speed view (index 3 & 4 de la conf engo), s'assurer qu'on skip le 2eme page pour le moment
-          //WIP
+          if (this.engoPage_current !== this.engoPage) {
+            // prefixCmd = this.getClearScreenCmd();
+            prefixCmd = [0xff, 0x30, 0x00, 0x06, 0x0f, 0xaa];
+            this.engoPage_current = this.engoPage;
+          }
+          let engoPage_local = 3;
           const PWM_rd =
             EUCDataResult.hPWM == null || EUCDataResult.hPWM === undefined
               ? 0
@@ -265,17 +321,23 @@ export default class EngoComm {
           HRRPArray.push(this.getHexText(speed_rd, 3, 1));
 
           if (this.variaTargetNb != 0) {
-            this.engoPage = 4;
+            this.engoVariaAlert = true;
+            engoPage_local = 4;
             HRRPArray.push(this.getHexText(this.engoVariaData(), 3, 1));
           } else {
-            if (this.engoVariaAlert == true) {
-              clearVariaAlertHR();
+            if (this.engoVariaAlert) {
+              prefixCmd.push(...this.clearVariaAlertHR());
+
               this.engoVariaAlert = false;
             }
-            this.engoPage = 3;
+            engoPage_local = 3;
           }
+          this.engoPage_current = 2;
 
-          return getPageCmd(pagePayload(HRRPArray), this.engoPage);
+          return [
+            ...prefixCmd,
+            ...this.getPageCmd(this.pagePayload(HRRPArray), engoPage_local),
+          ];
       }
     }
   }
@@ -292,12 +354,25 @@ export default class EngoComm {
     }
   }
 
-  engoVariaAlert() {
+  engoVariaAlertCmd() {
     const vehData = this.getHexText(this.engoVariaData(), 3, 1);
     const cmd = [0xff, 0x69, 0x00, vehData.length + 6, 0x28];
     cmd.push(...vehData);
     cmd.push(0xaa);
     return cmd;
+  }
+  checkVaria() {
+    const prefixCmd = [];
+    if (this.variaTargetNb != 0) {
+      this.engoVariaAlert = true;
+      prefixCmd.push(...this.engoVariaAlertCmd());
+    } else {
+      if (this.engoVariaAlert) {
+        prefixCmd.push(...this.clearVariaAlert());
+        this.engoVariaAlert = false;
+      }
+    }
+    return prefixCmd;
   }
 
   clearVariaAlert() {

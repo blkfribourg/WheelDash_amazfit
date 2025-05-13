@@ -2,13 +2,17 @@ const { wdEvent } = getApp()._options.globalData;
 import { setPageBrightTime } from "@zos/display";
 import { Vibrator, VIBRATOR_SCENE_DURATION } from "@zos/sensor";
 import { SoundPlayer } from "@silver-zepp/easy-media";
+import { SystemSounds } from "@zos/sensor";
 export default class Alarm {
   constructor() {
+    this.alarmType = "";
     this.PWM_thr = 70; // threshold for PWM alarm
     this.speed_thr = 25; // threshold for speed alarm
     this.temp_thr = 40; // threshold for temperature alarm
-    console.log("=== starting alarm player ===");
-    this.player = new SoundPlayer();
+    //  console.log("=== starting alarm player ===");
+    this.systemSounds = new SystemSounds();
+
+    //this.player = new SoundPlayer();
     this.vibrator = new Vibrator();
     this.vibrator.setMode(VIBRATOR_SCENE_DURATION);
     wdEvent.on("EUCData", (result) => {
@@ -17,13 +21,19 @@ export default class Alarm {
   }
 
   playPWMAlarm() {
-    this.player.play("assets://raw/alarms/PWM.mp3");
+    // this.player.play("assets://raw/alarms/PWM.mp3");
+    const alarmType = this.systemSounds.getSourceType().SOS;
+    this.systemSounds.start(alarmType);
   }
   playSpeedAlarm() {
-    this.player.play("assets://raw/alarms/Speed.mp3");
+    //  this.player.play("assets://raw/alarms/Speed.mp3");
+    const alarmType = this.systemSounds.getSourceType().ABN_LOW;
+    this.systemSounds.start(alarmType);
   }
   playTempAlarm() {
-    this.player.play("assets://raw/alarms/Temperature.mp3");
+    // this.player.play("assets://raw/alarms/Temperature.mp3");
+    const alarmType = this.systemSounds.getSourceType().ABN_HIGH;
+    this.systemSounds.start(alarmType);
   }
 
   alarmOnCondition(result) {
@@ -35,50 +45,49 @@ export default class Alarm {
         setPageBrightTime({
           brightTime: 1000,
         });
-        this.playPWMAlarm();
-        // console.log("=== PWM alarm ===");
-        if (!this.alarmInterval) {
-          this.alarmInterval = setInterval(() => {
+        if (!this.PWMAlarmInterval || this.alarmType != "PWM") {
+          this.clearAlarms();
+          this.playPWMAlarm();
+          this.PWMAlarmInterval = setInterval(() => {
             this.playPWMAlarm();
             this.vibrator.start();
           }, 1000);
         }
+        this.alarmType = "PWM";
         break;
       case temperature >= this.temp_thr:
         setPageBrightTime({
           brightTime: 1000,
         });
-        this.playTempAlarm();
-        // console.log("=== PWM alarm ===");
-        if (!this.alarmInterval) {
-          this.alarmInterval = setInterval(() => {
+        if (!this.tempAlarmInterval || this.alarmType != "Temperature") {
+          this.clearAlarms();
+          this.playTempAlarm();
+          this.tempAlarmInterval = setInterval(() => {
             this.playTempAlarm();
             this.vibrator.start();
           }, 10000);
         }
+        this.alarmType = "Temperature";
         break;
       case speed >= this.speed_thr:
         setPageBrightTime({
           brightTime: 1000,
         });
-        this.playSpeedAlarm();
-
-        if (!this.pwmSpeedInterval) {
-          this.pwmSpeedInterval = setInterval(() => {
+        if (!this.speedAlarmInterval || this.alarmType != "Speed") {
+          this.clearAlarms();
+          this.playSpeedAlarm();
+          this.speedAlarmInterval = setInterval(() => {
             this.playSpeedAlarm();
             this.vibrator.start();
           }, 5000);
         }
+        this.alarmType = "Speed";
         break;
       default:
-        if (this.alarmInterval) {
-          clearInterval(this.alarmInterval);
-          this.alarmInterval = null;
-          this.player.stop();
-          this.vibrator.stop();
-        }
+        this.clearAlarms();
         break;
     }
+
     /*
     if (hPWM >= this.PWM_thr) {
       setPageBrightTime({
@@ -100,6 +109,29 @@ export default class Alarm {
         this.vibrator.stop();
       }
     }*/
+  }
+  clearAlarms() {
+    if (this.PWMAlarmInterval) {
+      clearInterval(this.PWMAlarmInterval);
+      this.PWMAlarmInterval = null;
+      this.systemSounds.stop();
+      //   this.player.stop();
+      this.vibrator.stop();
+    }
+    if (this.tempAlarmInterval) {
+      clearInterval(this.tempAlarmInterval);
+      this.tempAlarmInterval = null;
+      //   this.player.stop();
+      this.systemSounds.stop();
+      this.vibrator.stop();
+    }
+    if (this.speedAlarmInterval) {
+      clearInterval(this.speedAlarmInterval);
+      this.speedAlarmInterval = null;
+      //   this.player.stop();
+      this.systemSounds.stop();
+      this.vibrator.stop();
+    }
   }
 }
 
