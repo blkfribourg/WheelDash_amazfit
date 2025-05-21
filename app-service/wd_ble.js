@@ -125,11 +125,17 @@ class BLE {
         const devices = ble.get.devices();
         Object.keys(devices).forEach((mac) => {
           const name = devices[mac].dev_name;
-          if (!this._scanDeviceQueue.some((d) => d.mac === mac)) {
+          const type = this.getDeviceType(name);
+          // Only add a device to queue if device type isn't "Unknow"
+          // too many listed devices induce crashing (additionnal testing are required to ensure crash is related to UI (ie huge amount of widget created) and not BLE stack)
+          if (
+            !this._scanDeviceQueue.some((d) => d.mac === mac) &&
+            type != "Unknown"
+          ) {
             this._scanDeviceQueue.push({
               mac,
               name,
-              type: this.getDeviceType(name),
+              type,
             });
           }
         });
@@ -144,7 +150,11 @@ class BLE {
         // Emit scan result to pages
         wdEvent.emit("scanResult", this._scanDeviceQueue);
       },
-      { allow_duplicates: true }
+      {
+        allow_duplicates: false,
+        duration: 5000, //temporary fix : stop scanning after 5 seconds to avoid device reboot/crash in crowded areas (like train station) as too many callbacks are generated.
+        on_duration: () => console.log("Scan complete"),
+      }
     );
   }
   stopScan() {

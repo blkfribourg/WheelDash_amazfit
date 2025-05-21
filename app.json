@@ -2,15 +2,15 @@
   "configVersion": "v3",
   "app": {
     "appId": 20877,
-    "appName": "Empty",
+    "appName": "WheelDash",
     "appType": "app",
     "version": {
       "code": 1,
       "name": "1.0.0"
     },
     "icon": "icon.png",
-    "vender": "zepp",
-    "description": "empty application"
+    "vender": "Blkfri",
+    "description": "WheelDash Amazfit"
   },
    "permissions": ["data:os.device.info", "data:user.info", "device:os.local_storage", "data:user.health", "device:os.ble", "device:os.bg_service"],
   "runtime": {
@@ -44,7 +44,7 @@
   },
   "i18n": {
     "en-US": {
-      "appName": "Empty"
+      "appName": "WheelDash"
     }
   },
   "defaultLanguage": "en-US"

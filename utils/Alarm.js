@@ -6,9 +6,9 @@ import { SystemSounds } from "@zos/sensor";
 export default class Alarm {
   constructor() {
     this.alarmType = "";
-    this.PWM_thr = 70; // threshold for PWM alarm
-    this.speed_thr = 25; // threshold for speed alarm
-    this.temp_thr = 40; // threshold for temperature alarm
+    this.PWM_thr = 80; // threshold for PWM alarm
+    this.speed_thr = 0; // threshold for speed alarm
+    this.temp_thr = 65; // threshold for temperature alarm
     //  console.log("=== starting alarm player ===");
     this.systemSounds = new SystemSounds();
 
@@ -41,7 +41,7 @@ export default class Alarm {
     //   console.log("=== check alarm ===");
     const { hPWM, speed, temperature } = result;
     switch (true) {
-      case hPWM >= this.PWM_thr:
+      case hPWM >= this.PWM_thr && this.PWM_thr != 0:
         setPageBrightTime({
           brightTime: 1000,
         });
@@ -55,7 +55,7 @@ export default class Alarm {
         }
         this.alarmType = "PWM";
         break;
-      case temperature >= this.temp_thr:
+      case temperature >= this.temp_thr && this.temp_thr != 0:
         setPageBrightTime({
           brightTime: 1000,
         });
@@ -69,7 +69,7 @@ export default class Alarm {
         }
         this.alarmType = "Temperature";
         break;
-      case speed >= this.speed_thr:
+      case speed >= this.speed_thr && this.speed_thr != 0:
         setPageBrightTime({
           brightTime: 1000,
         });

@@ -302,8 +302,8 @@ export default class EngoComm {
 
         case 2: // ici faire la high speed view (index 3 & 4 de la conf engo), s'assurer qu'on skip le 2eme page pour le moment
           if (this.engoPage_current !== this.engoPage) {
-            // prefixCmd = this.getClearScreenCmd();
-            prefixCmd = [0xff, 0x30, 0x00, 0x06, 0x0f, 0xaa];
+            prefixCmd = this.getClearScreenCmd();
+            // prefixCmd = [0xff, 0x30, 0x00, 0x06, 0x0f, 0xaa];
             this.engoPage_current = this.engoPage;
           }
           let engoPage_local = 3;
